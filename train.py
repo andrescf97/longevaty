@@ -32,6 +32,7 @@ load_config_store()
 def main(cfg: Config):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
+    ckpt_path = 
 
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
 
@@ -153,6 +154,7 @@ def train_step(
     state = nnx.state((model, optimizer))
     return loss, shuffled_recon_image, state
     
+@jax.jit
 def dev_step(
         graphdef: nnx.GraphDef,
         state: nnx.State,
