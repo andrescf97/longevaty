@@ -91,7 +91,8 @@ def main(cfg: Config):
     enc_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
     dec_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.dec_dim, dtype=dtype)
 
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(cfg.training.seed)
+    (graphdef, state) = nnx.split((model, optimizer))
     for epoch in range(0, cfg.training.epochs):
         # Trains
         running_loss = 0
@@ -100,7 +101,7 @@ def main(cfg: Config):
             B, n, _ = batch['image'].shape
             key, rng = jax.random.split(key)
             masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
-            loss, shuffled_recon_image = train_step(model, optimizer, batch['image'], 
+            loss, shuffled_recon_image, state = train_step(graphdef, state, batch['image'], 
                                                     enc_embed, dec_embed,
                                                     selected_indices, masked_indices)
             running_loss += loss
@@ -111,6 +112,7 @@ def main(cfg: Config):
         wandb.log({"train/mse": running_loss / steps_per_epoch})
         print(f"Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
         if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+            shuffled_recon_image = np.array(shuffled_recon_image)
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
             unpermute_indices = jnp.argsort(all_indices, axis=1)
             recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
@@ -127,7 +129,7 @@ def main(cfg: Config):
             B, n, _ = batch['image'].shape
             key, rng = jax.random.split(key)
             masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
-            loss, shuffled_recon_image = dev_step(model, batch['image'], 
+            loss, shuffled_recon_image = dev_step(graphdef, state, batch['image'], 
                                                     enc_embed, dec_embed,
                                                     selected_indices, masked_indices)
             running_loss += loss
@@ -143,39 +145,43 @@ def main(cfg: Config):
             vis_img = wandb.Image(vis)
             wandb.log({"dev_media/viz": vis_img})
         
+        # Checkpointing
         
+@jax.jit
 def train_step(
-        model: nnx.Module,
-        optimizer: nnx.Optimizer,
+        graphdef: nnx.GraphDef,
+        state: nnx.State,
         imgs: np.ndarray,
         enc_embed: jax.Array,
         dec_embed: jax.Array,
         selected_indices: jax.Array,
         masked_indices: jax.Array
 ):
+    (model, optimizer) = nnx.merge(graphdef, state)
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
     (loss, shuffled_recon_image), grads = grad_fn(model, imgs, 
                                                   enc_embed, dec_embed,
                                                   selected_indices, masked_indices)
     optimizer.update(grads)
-    shuffled_recon_image = np.array(shuffled_recon_image)
-    return loss, shuffled_recon_image
+    state = nnx.state((model, optimizer))
+    return loss, shuffled_recon_image, state
     
 def dev_step(
-        model: nnx.Module,
+        graphdef: nnx.GraphDef,
+        state: nnx.State,
         imgs: np.ndarray,
         enc_embed: jax.Array,
         dec_embed: jax.Array,
         selected_indices: jax.Array,
         masked_indices: jax.Array
 ):
+    (model, _) = nnx.merge(graphdef, state)
     loss, shuffled_recon_image = loss_fn(model, imgs, 
                                                   enc_embed, dec_embed,
                                                   selected_indices, masked_indices)
     shuffled_recon_image = np.array(shuffled_recon_image)
     return loss, shuffled_recon_image
 
-@nnx.jit
 def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices):
     selected_imgs = np.take_along_axis(imgs, selected_indices[:, 1:, :] - 1, axis=1)
     selected_imgs = jnp.array(selected_imgs, dtype=jnp.bfloat16)
