@@ -34,9 +34,9 @@ training:
     num_workers: 6
     dev_num_workers: 4
     test_num_workers: 1
-    worker_buffer_size: 10
+    prefetch_factor: 2
     shuffle: True
-    learning_rate: 7e-5
+    learning_rate: 1e-3
     epochs: 25
     batch_size: 10
     to_checkpoint: False

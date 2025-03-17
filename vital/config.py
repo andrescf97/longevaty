@@ -46,7 +46,7 @@ class TrainingConfig:
     num_workers: int =  8
     dev_num_workers: int = 4
     test_num_workers: int = 1
-    worker_buffer_size: int = 8
+    prefetch_factor: int = 2
     shuffle: bool = True
     learning_rate: float = MISSING
     epochs: int = MISSING

@@ -34,7 +34,7 @@ training:
     num_workers: 4
     dev_num_workers: 2
     test_num_workers: 1
-    worker_buffer_size: 5
+    prefetch_factor: 2
     shuffle: True
     learning_rate: 7e-5
     epochs: 25

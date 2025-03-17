@@ -13,9 +13,9 @@ def visualized_images(gt_tokens, recon_tokens, masked_indices,
     masked = reconstruct_from_patches(gt_masked, original_image_shape, patch_size)
     recon_image = reconstruct_from_patches(recon_tokens, original_image_shape, patch_size)
 
-    gt = torch.tensor(gt, device="cpu")
-    masked = torch.tensor(masked, device="cpu")
-    recon_image = torch.tensor(recon_image, device="cpu")
+    gt = torch.tensor(gt.astype('float32'), device="cpu")
+    masked = torch.tensor(masked.astype('float32'), device="cpu")
+    recon_image = torch.tensor(recon_image.astype('float32'), device="cpu")
 
     slice_list = []
     for slice_pos in slice_pos_list:

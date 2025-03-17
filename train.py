@@ -15,11 +15,15 @@ from vital.models.blocks import build_3d_sincos_position_embedding
 from tools.loop_conditions import to_log, to_visualize_images
 from tools.recon_visualize import visualized_images
 
-import grain.python as grain
+from monai.data import Dataset
+from torch import Generator
+from torch.utils.data import DataLoader
+import torch.multiprocessing as mp
 from flax import nnx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import optax
 
 load_config_store()
@@ -39,41 +43,24 @@ def main(cfg: Config):
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
-    train_sampler = grain.IndexSampler(
-        num_records=len(monai_dict_train),
-        shuffle=cfg.training.shuffle,
-        seed=cfg.training.seed,
-        shard_options=grain.NoSharding(),
-        num_epochs=1,
-    ) 
-    dev_sampler = grain.IndexSampler(
-        num_records=len(monai_dict_dev),
-        shuffle=False,
-        seed=0,
-        shard_options=grain.NoSharding(),
-        num_epochs=1,
-    ) 
+    train_ds = Dataset(data=monai_dict_train, transform=train_transforms)
+    dev_ds = Dataset(data=monai_dict_dev, transform=dev_transforms)
 
-    train_loader = grain.DataLoader(
-        data_source=monai_dict_train,
-        sampler=train_sampler,
-        worker_count=cfg.training.num_workers,
-        worker_buffer_size=cfg.training.worker_buffer_size,
-        operations=[
-            DataAugs(train_transforms),
-            grain.Batch(cfg.training.batch_size, drop_remainder=True)
-        ]
-    )
-    dev_loader = grain.DataLoader(
-        data_source=monai_dict_dev,
-        sampler=dev_sampler,
-        worker_count=cfg.training.num_workers,
-        worker_buffer_size=1,
-        operations=[
-            DataAugs(dev_transforms),
-            grain.Batch(cfg.training.batch_size, drop_remainder=True)
-        ]
-    )
+    dataset_gnr = Generator(device="cpu")
+    dataset_gnr.manual_seed(0)
+    dev_dataset_gnr = Generator(device="cpu")
+    dev_dataset_gnr.manual_seed(0)
+    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
+                              shuffle=cfg.training.shuffle, 
+                              collate_fn=collate_fn,
+                              num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
+                              persistent_workers=True, pin_memory=False, drop_last=True,
+                              generator=dataset_gnr)
+    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
+                        collate_fn=collate_fn,
+                        num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
+                        persistent_workers=True, pin_memory=False, drop_last=True,
+                        generator=dev_dataset_gnr)
 
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
@@ -206,6 +193,12 @@ def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.
     masked_indices = shuffled_indices[:, selected_len:]
     return masked_indices[:, :, None], selected_indices[:, :, None]
 
+def collate_fn(batch):
+    batch = pd.DataFrame(batch).to_dict(orient="list")
+    for key in batch:
+        batch[key] = np.stack(batch[key], axis=0)
+    return batch
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main() 
