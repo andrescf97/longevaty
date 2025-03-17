@@ -1,0 +1,203 @@
+import os
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
+
+import hydra
+from omegaconf import OmegaConf
+
+import wandb
+import json
+import math
+
+from vital.config import Config, load_config_store
+from vital.transformations import make_transformations, DataAugs
+from vital.models.vital import Vital
+from vital.models.blocks import build_3d_sincos_position_embedding
+from tools.loop_conditions import to_log, to_visualize_images
+from tools.recon_visualize import visualized_images
+
+import grain.python as grain
+from flax import nnx
+import jax
+import jax.numpy as jnp
+import numpy as np
+import optax
+
+load_config_store()
+
+@hydra.main(config_path="./configs", config_name='jax.yaml', version_base=None)
+def main(cfg: Config):
+    if cfg.wandb.dry_run:
+        os.environ["WANDB_MODE"] = "dryrun"
+
+    wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
+
+    with open(cfg.data.monai_dict_train) as fp:
+        monai_dict_train = json.load(fp)
+    with open(cfg.data.monai_dict_dev) as fp:
+        monai_dict_dev = json.load(fp)
+    
+    train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
+    dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
+
+    train_sampler = grain.IndexSampler(
+        num_records=len(monai_dict_train),
+        shuffle=cfg.training.shuffle,
+        seed=cfg.training.seed,
+        shard_options=grain.NoSharding(),
+        num_epochs=1,
+    ) 
+    dev_sampler = grain.IndexSampler(
+        num_records=len(monai_dict_dev),
+        shuffle=False,
+        seed=0,
+        shard_options=grain.NoSharding(),
+        num_epochs=1,
+    ) 
+
+    train_loader = grain.DataLoader(
+        data_source=monai_dict_train,
+        sampler=train_sampler,
+        worker_count=cfg.training.num_workers,
+        worker_buffer_size=cfg.training.worker_buffer_size,
+        operations=[
+            DataAugs(train_transforms),
+            grain.Batch(cfg.training.batch_size, drop_remainder=True)
+        ]
+    )
+    dev_loader = grain.DataLoader(
+        data_source=monai_dict_dev,
+        sampler=dev_sampler,
+        worker_count=cfg.training.num_workers,
+        worker_buffer_size=1,
+        operations=[
+            DataAugs(dev_transforms),
+            grain.Batch(cfg.training.batch_size, drop_remainder=True)
+        ]
+    )
+
+    model = Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
+                  dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
+                  rngs=nnx.Rngs(cfg.model.rng))
+    optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=cfg.training.learning_rate))
+
+    img_size = cfg.data.img_size
+    grid_size = [
+        img_size[0] / cfg.model.patch_size,
+        img_size[1] / cfg.model.patch_size,
+        img_size[2] / cfg.model.patch_size
+    ]
+    enc_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim)
+    dec_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.dec_dim)
+
+    key = jax.random.PRNGKey(0)
+    for epoch in range(0, cfg.training.epochs):
+        # Trains
+        running_loss = 0
+        steps_per_epoch = math.ceil(len(monai_dict_train) / cfg.training.batch_size)
+        for step, batch in enumerate(train_loader):
+            B, n, _ = batch['image'].shape
+            key, rng = jax.random.split(key)
+            masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
+            loss, shuffled_recon_image = train_step(model, optimizer, batch['image'], 
+                                                    enc_embed, dec_embed,
+                                                    selected_indices, masked_indices)
+            running_loss += loss
+            if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
+                wandb.log({"train/loss_step": loss})
+                print(f"Epoch {epoch}, step {step} / {steps_per_epoch}: loss {loss}")
+
+        wandb.log({"train/mse": running_loss / steps_per_epoch})
+        print(f"Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
+        if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+            all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
+            unpermute_indices = jnp.argsort(all_indices, axis=1)
+            recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
+            vis = visualized_images(batch['image'], recon_image, masked_indices,
+                                patch_size=[cfg.model.patch_size]*3, batch_size=cfg.training.batch_size,
+                                img_shape=cfg.data.img_size)
+            vis_img = wandb.Image(vis)
+            wandb.log({"train_media/viz": vis_img})
+
+        # Dev
+        running_loss = 0
+        steps_per_epoch = math.ceil(len(monai_dict_dev) / cfg.training.batch_size)
+        for step, batch in enumerate(dev_loader):
+            B, n, _ = batch['image'].shape
+            key, rng = jax.random.split(key)
+            masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
+            loss, shuffled_recon_image = dev_step(model, batch['image'], 
+                                                    enc_embed, dec_embed,
+                                                    selected_indices, masked_indices)
+            running_loss += loss
+        wandb.log({"dev/mse": running_loss / steps_per_epoch})
+        print(f"Dev. Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
+        if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+            all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
+            unpermute_indices = jnp.argsort(all_indices, axis=1)
+            recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
+            vis = visualized_images(batch['image'], recon_image, masked_indices,
+                                patch_size=[cfg.model.patch_size]*3, batch_size=cfg.training.batch_size,
+                                img_shape=cfg.data.img_size)
+            vis_img = wandb.Image(vis)
+            wandb.log({"dev_media/viz": vis_img})
+        
+        
+def train_step(
+        model: nnx.Module,
+        optimizer: nnx.Optimizer,
+        imgs: np.ndarray,
+        enc_embed: jax.Array,
+        dec_embed: jax.Array,
+        selected_indices: jax.Array,
+        masked_indices: jax.Array
+):
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+    (loss, shuffled_recon_image), grads = grad_fn(model, imgs, 
+                                                  enc_embed, dec_embed,
+                                                  selected_indices, masked_indices)
+    optimizer.update(grads)
+    shuffled_recon_image = np.array(shuffled_recon_image)
+    return loss, shuffled_recon_image
+    
+def dev_step(
+        model: nnx.Module,
+        imgs: np.ndarray,
+        enc_embed: jax.Array,
+        dec_embed: jax.Array,
+        selected_indices: jax.Array,
+        masked_indices: jax.Array
+):
+    loss, shuffled_recon_image = loss_fn(model, imgs, 
+                                                  enc_embed, dec_embed,
+                                                  selected_indices, masked_indices)
+    shuffled_recon_image = np.array(shuffled_recon_image)
+    return loss, shuffled_recon_image
+
+@nnx.jit
+def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices):
+    selected_imgs = np.take_along_axis(imgs, selected_indices[:, 1:, :] - 1, axis=1)
+    selected_imgs = jnp.array(selected_imgs, dtype=jnp.bfloat16)
+    selected_enc_embed = np.take_along_axis(enc_embed, selected_indices, axis=1)
+
+    # Add cls position embed
+    shuffled_recon_img = model(selected_imgs,
+                      selected_enc_embed, dec_embed,
+                      selected_indices, masked_indices)
+
+    num_selected_patches = (selected_indices.shape[1] - 1)
+    mse = optax.l2_loss(shuffled_recon_img[:, :num_selected_patches, :], selected_imgs)
+    return mse.mean(), shuffled_recon_img
+    
+
+def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.random.PRNGKey):
+    indices = jnp.tile(jnp.arange(1, seq_len + 1), (batch_size, 1))
+    shuffled_indices = jax.random.permutation(rng, x=indices, axis=1, independent=True)
+
+    selected_len = seq_len - int(mask_ratio * seq_len)
+    selected_indices = jnp.concatenate([jnp.zeros((batch_size, 1), dtype=jnp.int32), shuffled_indices[:, :selected_len]], axis=1)
+    masked_indices = shuffled_indices[:, selected_len:]
+    return masked_indices[:, :, None], selected_indices[:, :, None]
+
+
+if __name__ == "__main__":
+    main() 

@@ -1,0 +1,176 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: False
+    project_name: "mae-jax"
+    task: "mae"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
+    monai_dict_train: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_train_lrz.json"
+    monai_dict_dev: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_dev_lrz.json"
+    monai_dict_test: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_test_lrz.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    mask_ratio: 0.5
+    seed: 0
+    save_embeddings: False #save val embeddings after last epoch
+    num_workers: 4
+    dev_num_workers: 2
+    test_num_workers: 1
+    worker_buffer_size: 5
+    shuffle: True
+    learning_rate: 7e-5
+    epochs: 25
+    batch_size: 5
+    to_checkpoint: False
+    lr_scheduler: onecycle
+
+# weighting:
+#     use_sqrt: False
+#     weight_decay_factor: 0.9
+#     decay_epochs: 5
+#     strategy: heirarchical
+#     underrepresented_weight: 5
+
+# loss:
+#     sw: 1
+#     aw: 10
+#     clw: 0
+
+# attention:
+#     strategy: separate
+#     blocks: lastn
+#     num_blocks: 4
+#     heads: [1, 2, 3, 4]
+#     token: cls
+
+log:
+    ckpt_loc: "/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/checkpoints/"
+    ckpt_best: 'sybil-vit'
+    ckpt_last: 'sybil-vit-last'
+    ckpt_load: 'no_loading'
+    checkpoint_at_epoch: 2
+    log_at_these_steps: 100
+    log_scans_at_these_epochs: 50
+    cancer_cases_to_log: 0
+    laterality_cases_to_log: 0
+    healthy_cases_to_log: 0
+    big_nodule_no_cancer_cases_to_log: 0
+    use_checkpoint: 'mae_lemon-butterfly-383.ckpt'
+    save_path_eval_predictions: '/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/predictions'
+    num_predictions: 20
+
+model:
+    patch_size: 16
+    enc_dim: 768
+    dec_dim: 768
+    dropout_rate: 0.1
+    dec_heads: 12
+    dec_depth: 12
+    in_chans: 1
+    rng: 24
+
+transform:
+    train_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        RandFlipd_1:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 0
+        RandFlipd_2:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 1
+        RandFlipd_3:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 2
+        RandRotated:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.5
+            range_x: 0.2
+            range_y: 0.2
+            range_z: 0.2
+            mode: ['bilinear', 'nearest', 'nearest']
+        RandHistogramShiftd:
+            keys: ['image']
+            prob: 0.33
+            num_control_points: [5,8]
+        RandGaussianSharpend:
+            keys: ['image']
+            sigma1_x: [0.1,0.5]
+            sigma1_y: [0.1,0.5]
+            sigma1_z: [0.1,0.5]
+            sigma2_x: 0.3
+            sigma2_y: 0.3
+            sigma2_z: 0.3
+            prob: 0.33
+            alpha: [1.5, 10]
+        RandGaussianNoised:
+            keys: ['image']
+            prob: 0.33
+            mean: 0
+            std: 0.1
+        RandCoarseDropoutd:
+            keys: ['image']
+            prob: 0.33
+            holes: 60
+            spatial_size: 16
+            fill_value: -1
+        ToNumpyd:
+            keys: ['image', 'mask', 'annotation', 'y_seq', 'y_mask', 'y', 'visible_nodule']
+            allow_missing_keys: True
+        MaskPatchesd_our:
+            hull_only: False
+            use_annotations: False
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+
+    dev_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        ToNumpyd:
+            keys: ['image', 'mask', 'annotation', 'y_seq', 'y_mask', 'y', 'visible_nodule']
+            allow_missing_keys: True
+        MaskPatchesd_our:
+            keys: ['image']
+            patch_size: [16, 16, 16]

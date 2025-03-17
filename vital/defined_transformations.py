@@ -1,0 +1,149 @@
+import torch.nn.functional as F
+from einops import rearrange
+import torch
+from monai import transforms
+import numpy as np
+
+
+def pad_tensor(tensor, desired_shape, pad_value=None):
+    """
+    Pads the input tensor at the end of each spatial dimension to reach the desired shape.
+    
+    Args:
+        tensor (torch.Tensor): Input tensor of shape [C, D, H, W] or [D, H, W].
+        desired_shape (tuple): Desired spatial shape as (D_new, H_new, W_new).
+        pad_value (float or bool, optional): Value to pad with. Defaults to 0 for numeric tensors and False for boolean tensors.
+    
+    Returns:
+        torch.Tensor: Padded tensor.
+    """
+    if tensor.dim() == 3:
+        tensor = tensor.unsqueeze(0)  # Add channel dimension: [1, D, H, W]
+    
+    C, D, H, W = tensor.shape
+    D_new, H_new, W_new = desired_shape
+    
+    # Calculate padding sizes: (W_left, W_right, H_left, H_right, D_left, D_right)
+    # Since padding is at the end, lefts are 0
+    pad_depth = D_new - D
+    pad_height = H_new - H
+    pad_width = W_new - W
+    
+    if pad_depth < 0 or pad_height < 0 or pad_width < 0:
+        raise ValueError("Desired shape must be greater than or equal to the tensor's current shape in all dimensions.")
+    
+    # Determine default pad_value based on tensor dtype if not provided
+    if pad_value is None:
+        if torch.is_floating_point(tensor):
+            pad_value = 0.0
+        elif torch.is_bool(tensor):
+            pad_value = False
+        else:
+            raise ValueError("Unsupported tensor dtype. Provide a pad_value for non-floating and non-boolean tensors.")
+    
+    # Apply padding
+    padded_tensor = F.pad(
+        tensor, 
+        (0, pad_width, 0, pad_height, 0, pad_depth), 
+        mode='constant', 
+        value=pad_value
+    )
+    
+    # If original tensor was 3D, remove the added channel dimension
+    # if padded_tensor.size(0) == 1:
+    #     padded_tensor = padded_tensor.squeeze(0)
+    
+    return padded_tensor
+
+
+def extract_patches(image_batch, patch_size):
+    """
+    Extracts non-overlapping patches from a batch of 3D images.
+    
+    Args:
+        image_batch (torch.Tensor): Padded images tensor of shape [B, D, H, W]
+        patch_size (tuple): Patch size (pD, pH, pW)
+    
+    Returns:
+        torch.Tensor: Extracted patches of shape [B, num_patches, pD*pH*pW]
+    """
+    C, D, H, W = image_batch.shape
+    pD, pH, pW = patch_size
+    # Rearrange to extract patches
+    patches = rearrange(image_batch, 
+                       'b (d p1) (h p2) (w p3) -> b (d h w) (p1 p2 p3)', 
+                       p1=pD, p2=pH, p3=pW)
+    return patches
+
+def reconstruct_from_patches(patches, image_shape, patch_size):
+    """
+    Reconstructs a batch of 3D images from non-overlapping patches.
+    
+    Args:
+        patches (torch.Tensor): Tensor of patches with shape [B, num_patches, pD*pH*pW]
+        image_shape (tuple): Original image shape (B, D, H, W)
+        patch_size (tuple): Patch size (pD, pH, pW)
+        
+    Returns:
+        torch.Tensor: Reconstructed image batch of shape [B, D, H, W]
+    """
+    B, D, H, W = image_shape
+    pD, pH, pW = patch_size
+    
+    # Rearrange to reconstruct the original grid
+    reconstructed_images = rearrange(patches, 
+                                     'b (d h w) (p1 p2 p3) -> b (d p1) (h p2) (w p3)', 
+                                     d=D // pD, h=H // pH, w=W // pW, 
+                                     p1=pD, p2=pH, p3=pW)
+    
+    return reconstructed_images
+
+
+class MaskPatchesd(transforms.MapTransform):
+    def __init__(self, keys, patch_size, hull_only=False, use_annotations=True):
+        super().__init__(keys)
+        self.patch_size = patch_size
+        self.hull_only = hull_only
+        self.use_annotations = use_annotations
+
+    def __call__(self, data):
+        image = data["image"]
+
+        patched_image = extract_patches(image,self.patch_size)
+        data["image"] = patched_image.squeeze()
+
+        annotation = data.get('annotation', None)
+        if annotation is not None and self.use_annotations:
+            patched_annotation = extract_patches(annotation, self.patch_size)
+            data["annotation"] = patched_annotation.squeeze()
+            data['has_annotation'] = True
+        else:
+            annotation_mask = data["mask"].copy()
+            laterality = data["cancer_laterality"]
+
+            if self.hull_only:
+                annotation_mask[annotation_mask > 0] = 1 #select only hull
+            elif laterality[1]:
+                annotation_mask[annotation_mask != laterality[1]] = 0
+            elif laterality[0] == 3:
+                annotation_mask[annotation_mask < 4] = 0 #select right lung only
+            elif laterality[0] == 4:
+                annotation_mask[annotation_mask == 1] = 0 #get rid of hull
+                annotation_mask[annotation_mask > 3] = 0 #select left lung only
+            patched_annotation_mask = extract_patches(annotation_mask, self.patch_size).squeeze()
+            data["annotation"] = patched_annotation_mask
+            data['has_annotation'] = False
+
+        data.pop("mask")
+        data.pop("exam_str")
+        data.pop("exam")
+        data.pop("accession")
+        data.pop("series")
+        data.pop("study")
+        data.pop("pid")
+        data.pop("screen_timepoint")
+        data.pop("device")
+        data.pop("institution")
+        data.pop("cancer_laterality")
+
+        return data
