@@ -98,6 +98,32 @@ def reconstruct_from_patches(patches, image_shape, patch_size):
     
     return reconstructed_images
 
+class Patchify(transforms.MapTransform):
+    def __init__(self, keys, patch_size):
+        super().__init__(keys)
+        self.patch_size = patch_size
+
+    def __call__(self, data):
+        image = data["image"]
+
+        patched_image = extract_patches(image,self.patch_size)
+        data["image"] = patched_image.squeeze()
+
+        data.pop("mask")
+        data.pop("exam_str")
+        data.pop("exam")
+        data.pop("accession")
+        data.pop("series")
+        data.pop("study")
+        data.pop("pid")
+        data.pop("screen_timepoint")
+        data.pop("device")
+        data.pop("institution")
+        data.pop("cancer_laterality")
+        data.pop("annotation", None)
+        return data
+
+
 
 class MaskPatchesd(transforms.MapTransform):
     def __init__(self, keys, patch_size, hull_only=False, use_annotations=True):

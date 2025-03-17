@@ -4,9 +4,9 @@ import jax.numpy as jnp
 from flax import nnx
 
 class PatchEmbed1D(nnx.Module):
-    def __init__(self, patch_size=16, embed_dim=768, patch_dim=3, rngs = nnx.Rngs(0)):
+    def __init__(self, patch_size=16, embed_dim=768, patch_dim=3, dtype=jnp.bfloat16, rngs = nnx.Rngs(0)):
         input_features = pow(patch_size, patch_dim)
-        self.proj = nnx.Linear(input_features, embed_dim, rngs=rngs)
+        self.proj = nnx.Linear(input_features, embed_dim, rngs=rngs, dtype=dtype)
     def __call__(self, x: jax.Array) -> jax.Array:
         return self.proj(x)
 
@@ -20,21 +20,22 @@ class MAEVitEncoder(nnx.Module):
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
         *,
+        dtype: type = jnp.bfloat16,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         # Patch and position embedding
-        self.patch_embeddings = PatchEmbed1D(patch_size=patch_size, embed_dim=hidden_size, rngs=rngs)
+        self.patch_embeddings = PatchEmbed1D(patch_size=patch_size, embed_dim=hidden_size, rngs=rngs, dtype=dtype)
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        self.cls_token = nnx.Param(jnp.zeros((1, 1, hidden_size)))
+        self.cls_token = nnx.Param(jnp.zeros((1, 1, hidden_size), dtype=dtype))
 
         # Transformer Encoder blocks
         self.encoder = nnx.Sequential(*[
-            TransformerEncoder(hidden_size, hidden_size * mlp_ratio, num_heads, dropout_rate, rngs=rngs)
+            TransformerEncoder(hidden_size, hidden_size * mlp_ratio, num_heads, dropout_rate, rngs=rngs, dtype=dtype)
             for i in range(num_blocks)
         ])
-        self.final_norm = nnx.LayerNorm(hidden_size, rngs=rngs)
+        self.final_norm = nnx.LayerNorm(hidden_size, rngs=rngs, dtype=dtype)
 
 
     def __call__(self, x: jax.Array, pos_embed: jax.Array) -> jax.Array:
@@ -63,6 +64,7 @@ class MAEVitDecoder(nnx.Module):
         mlp_ratio: int = 4,
         dropout_rate: float = 0.1,
         *,
+        dtype: type = jnp.bfloat16,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         self.out_features = pow(patch_size, patch_dim)
@@ -72,11 +74,11 @@ class MAEVitDecoder(nnx.Module):
 
         # Transformer Encoder blocks
         self.decoder = nnx.Sequential(*[
-            TransformerEncoder(embed_dim, embed_dim * mlp_ratio, num_heads, dropout_rate, rngs=rngs)
+            TransformerEncoder(embed_dim, embed_dim * mlp_ratio, num_heads, dropout_rate, rngs=rngs, dtype=dtype)
             for i in range(num_blocks)
         ])
-        self.final_norm = nnx.LayerNorm(embed_dim, rngs=rngs)
-        self.projector = nnx.Linear(embed_dim, self.out_features, rngs=rngs)
+        self.final_norm = nnx.LayerNorm(embed_dim, rngs=rngs, dtype=dtype)
+        self.projector = nnx.Linear(embed_dim, self.out_features, rngs=rngs, dtype=dtype)
 
     def __call__(self, x: jax.Array, pos_embed: jax.Array) -> jax.Array:
         input = x + pos_embed
@@ -95,10 +97,11 @@ class TransformerEncoder(nnx.Module):
         num_heads: int,
         dropout_rate: float = 0.0,
         *,
+        dtype: type = jnp.bfloat16,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ) -> None:
 
-        self.norm1 = nnx.LayerNorm(hidden_size, rngs=rngs)
+        self.norm1 = nnx.LayerNorm(hidden_size, rngs=rngs, dtype=dtype)
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
             in_features=hidden_size,
@@ -107,14 +110,15 @@ class TransformerEncoder(nnx.Module):
             decode=False,
             deterministic=False,
             rngs=rngs,
+            dtype=dtype
         )
-        self.norm2 = nnx.LayerNorm(hidden_size, rngs=rngs)
+        self.norm2 = nnx.LayerNorm(hidden_size, rngs=rngs, dtype=dtype)
 
         self.mlp = nnx.Sequential(
-            nnx.Linear(hidden_size, mlp_dim, rngs=rngs),
+            nnx.Linear(hidden_size, mlp_dim, rngs=rngs, dtype=dtype),
             nnx.gelu,
             nnx.Dropout(dropout_rate, rngs=rngs),
-            nnx.Linear(mlp_dim, hidden_size, rngs=rngs),
+            nnx.Linear(mlp_dim, hidden_size, rngs=rngs, dtype=dtype),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
 
@@ -124,13 +128,13 @@ class TransformerEncoder(nnx.Module):
         return x
 
 
-def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=10000.):
+def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=10000., dtype=jnp.bfloat16):
     # Ensure grid size is in the correct format
     h, w, d = grid_size
     # Create 1D grids for h, w, and d
-    grid_h = np.arange(h, dtype=jnp.float32)
-    grid_w = np.arange(w, dtype=jnp.float32)
-    grid_d = np.arange(d, dtype=jnp.float32)
+    grid_h = np.arange(h, dtype=dtype)
+    grid_w = np.arange(w, dtype=dtype)
+    grid_d = np.arange(d, dtype=dtype)
     
     # Create 3D meshgrid
     grid_h, grid_w, grid_d = np.meshgrid(grid_h, grid_w, grid_d, indexing='ij')
@@ -138,7 +142,7 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     assert embed_dim % 6 == 0, 'Embed dimension must be divisible by 6 for 3D sin-cos position embedding'
 
     pos_dim = embed_dim // 6
-    omega = np.arange(pos_dim, dtype=jnp.float32) / pos_dim
+    omega = np.arange(pos_dim, dtype=dtype) / pos_dim
     omega = 1. / (temperature ** omega)
 
     # Flatten grids and apply omega scaling

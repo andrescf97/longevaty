@@ -75,8 +75,10 @@ def main(cfg: Config):
         ]
     )
 
+    dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
                   dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
+                  dtype=dtype,
                   rngs=nnx.Rngs(cfg.model.rng))
     optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=cfg.training.learning_rate))
 
@@ -86,8 +88,8 @@ def main(cfg: Config):
         img_size[1] / cfg.model.patch_size,
         img_size[2] / cfg.model.patch_size
     ]
-    enc_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim)
-    dec_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.dec_dim)
+    enc_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
+    dec_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.dec_dim, dtype=dtype)
 
     key = jax.random.PRNGKey(0)
     for epoch in range(0, cfg.training.epochs):

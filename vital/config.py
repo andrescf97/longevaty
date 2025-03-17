@@ -40,6 +40,7 @@ class LossFn(Enum):
 
 @dataclass
 class TrainingConfig:
+    dtype: str = 'bfloat16'
     mask_ratio: float = 0.4
     seed: int = 0
     num_workers: int =  8

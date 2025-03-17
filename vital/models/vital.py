@@ -13,6 +13,7 @@ class Vital(nnx.Module):
         dec_blocks: int = 12,
         dec_heads: int = 12,
         drouput_rate: float = 0.2,
+        dtype: type = jnp.bfloat16,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ):
@@ -22,6 +23,7 @@ class Vital(nnx.Module):
             num_heads=12,
             hidden_size=enc_dim,
             dropout_rate=drouput_rate,
+            dtype=dtype,
             rngs=rngs
         )
         self.decoder = MAEVitDecoder(
@@ -30,11 +32,12 @@ class Vital(nnx.Module):
             num_blocks=dec_blocks,
             num_heads=dec_heads,
             dropout_rate=drouput_rate,
+            dtype=dtype,
             rngs=rngs
         )
-        self.encoding_projection = nnx.Linear(enc_dim, dec_dim, rngs=rngs)
+        self.encoding_projection = nnx.Linear(enc_dim, dec_dim, rngs=rngs, dtype=dtype)
 
-        self.mask_token = nnx.Param(jnp.zeros((1, 1, dec_dim)))
+        self.mask_token = nnx.Param(jnp.zeros((1, 1, dec_dim), dtype=dtype))
 
     def __call__(
         self,

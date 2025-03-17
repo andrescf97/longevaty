@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: False
+    dry_run: True
     project_name: "mae-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -27,6 +27,7 @@ data:
 
 
 training:
+    dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
     save_embeddings: False #save val embeddings after last epoch
@@ -147,14 +148,13 @@ transform:
             holes: 60
             spatial_size: 16
             fill_value: -1
-        ToNumpyd:
-            keys: ['image', 'mask', 'annotation', 'y_seq', 'y_mask', 'y', 'visible_nodule']
-            allow_missing_keys: True
-        MaskPatchesd_our:
-            hull_only: False
-            use_annotations: False
+        Patchify_our:
             keys: ['mask']
             patch_size: [16, 16, 16]
+        ToNumpyd:
+            keys: ['image']
+            allow_missing_keys: True
+            dtype: bfloat16
 
     dev_tf:
         LoadImaged:
@@ -168,9 +168,10 @@ transform:
             mode: ["trilinear", "nearest", "nearest"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
-        ToNumpyd:
-            keys: ['image', 'mask', 'annotation', 'y_seq', 'y_mask', 'y', 'visible_nodule']
-            allow_missing_keys: True
-        MaskPatchesd_our:
-            keys: ['image']
+        Patchify_our:
+            keys: ['mask']
             patch_size: [16, 16, 16]
+        ToNumpyd:
+            keys: ['image']
+            allow_missing_keys: True
+            dtype: bfloat16
