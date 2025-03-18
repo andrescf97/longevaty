@@ -35,6 +35,8 @@ def main(cfg: Config):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
+
+    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, wandb.run.name)
     
     # Data
     with open(cfg.data.monai_dict_train) as fp:
@@ -86,9 +88,9 @@ def main(cfg: Config):
     (graphdef, state) = nnx.split((model, optimizer))
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1, )
-    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_load), options=options)
-    last_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_last), options=options)
-    best_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_best), options=options)
+    load_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_load), options=options)
+    last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
+    best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
 
     if cfg.log.use_checkpoint:
         start_epoch, prev_state = load_checkpoint(load_mngr)
