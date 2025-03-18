@@ -15,7 +15,7 @@ from vital.models.blocks import build_3d_sincos_position_embedding
 from tools.loop_conditions import to_log, to_visualize_images
 from tools.recon_visualize import visualized_images
 
-from monai.data import Dataset
+from monai.data import Dataset, CacheDataset, ThreadDataLoader
 from torch import Generator
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import optax
+import orbax.checkpoint as ocp
 
 load_config_store()
 
@@ -32,10 +33,9 @@ load_config_store()
 def main(cfg: Config):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
-    ckpt_path = 
-
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
-
+    
+    # Data
     with open(cfg.data.monai_dict_train) as fp:
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
@@ -63,6 +63,7 @@ def main(cfg: Config):
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
 
+    # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
                   dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
@@ -124,6 +125,7 @@ def main(cfg: Config):
         wandb.log({"dev/mse": running_loss / steps_per_epoch})
         print(f"Dev. Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
         if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+            shuffled_recon_image = np.array(shuffled_recon_image)
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
             unpermute_indices = jnp.argsort(all_indices, axis=1)
             recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
@@ -168,13 +170,12 @@ def dev_step(
     loss, shuffled_recon_image = loss_fn(model, imgs, 
                                                   enc_embed, dec_embed,
                                                   selected_indices, masked_indices)
-    shuffled_recon_image = np.array(shuffled_recon_image)
     return loss, shuffled_recon_image
 
 def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices):
-    selected_imgs = np.take_along_axis(imgs, selected_indices[:, 1:, :] - 1, axis=1)
-    selected_imgs = jnp.array(selected_imgs, dtype=jnp.bfloat16)
-    selected_enc_embed = np.take_along_axis(enc_embed, selected_indices, axis=1)
+    selected_imgs = jnp.take_along_axis(imgs, selected_indices[:, 1:, :] - 1, axis=1)
+    masked_imgs = jnp.take_along_axis(imgs, masked_indices - 1, axis=1)
+    selected_enc_embed = jnp.take_along_axis(enc_embed, selected_indices, axis=1)
 
     # Add cls position embed
     shuffled_recon_img = model(selected_imgs,
@@ -182,7 +183,7 @@ def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices)
                       selected_indices, masked_indices)
 
     num_selected_patches = (selected_indices.shape[1] - 1)
-    mse = optax.l2_loss(shuffled_recon_img[:, :num_selected_patches, :], selected_imgs)
+    mse = optax.l2_loss(shuffled_recon_img[:, num_selected_patches:, :], masked_imgs)
     return mse.mean(), shuffled_recon_img
     
 
@@ -198,7 +199,7 @@ def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.
 def collate_fn(batch):
     batch = pd.DataFrame(batch).to_dict(orient="list")
     for key in batch:
-        batch[key] = np.stack(batch[key], axis=0)
+        batch[key] = jnp.array(np.stack(batch[key], axis=0), dtype=jnp.bfloat16)
     return batch
 
 if __name__ == "__main__":

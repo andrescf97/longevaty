@@ -132,9 +132,9 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     # Ensure grid size is in the correct format
     h, w, d = grid_size
     # Create 1D grids for h, w, and d
-    grid_h = np.arange(h, dtype=dtype)
-    grid_w = np.arange(w, dtype=dtype)
-    grid_d = np.arange(d, dtype=dtype)
+    grid_h = jnp.arange(h, dtype=dtype)
+    grid_w = jnp.arange(w, dtype=dtype)
+    grid_d = jnp.arange(d, dtype=dtype)
     
     # Create 3D meshgrid
     grid_h, grid_w, grid_d = np.meshgrid(grid_h, grid_w, grid_d, indexing='ij')
@@ -142,22 +142,22 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     assert embed_dim % 6 == 0, 'Embed dimension must be divisible by 6 for 3D sin-cos position embedding'
 
     pos_dim = embed_dim // 6
-    omega = np.arange(pos_dim, dtype=dtype) / pos_dim
+    omega = jnp.arange(pos_dim, dtype=dtype) / pos_dim
     omega = 1. / (temperature ** omega)
 
     # Flatten grids and apply omega scaling
-    out_h = np.einsum('m,d->md', grid_h.flatten(), omega)
-    out_w = np.einsum('m,d->md', grid_w.flatten(), omega)
-    out_d = np.einsum('m,d->md', grid_d.flatten(), omega)
+    out_h = jnp.einsum('m,d->md', grid_h.flatten(), omega)
+    out_w = jnp.einsum('m,d->md', grid_w.flatten(), omega)
+    out_d = jnp.einsum('m,d->md', grid_d.flatten(), omega)
 
     # Compute sin and cos embeddings
     pos_emb = jnp.concatenate([
-        np.sin(out_h), np.cos(out_h),
-        np.sin(out_w), np.cos(out_w),
-        np.sin(out_d), np.cos(out_d)
+        jnp.sin(out_h), jnp.cos(out_h),
+        jnp.sin(out_w), jnp.cos(out_w),
+        jnp.sin(out_d), jnp.cos(out_d)
     ], axis=1)
 
     # Reshape the embeddings to (1, num_positions, embed_dim)
-    pos_emb = np.concatenate([np.zeros_like(pos_emb), pos_emb], axis=0)
-    pos_emb = np.tile(pos_emb, (batch, 1, 1))
+    pos_emb = jnp.concatenate([jnp.zeros_like(pos_emb), pos_emb], axis=0)
+    pos_emb = jnp.tile(pos_emb, (batch, 1, 1))
     return pos_emb
