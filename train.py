@@ -9,11 +9,12 @@ import json
 import math
 
 from vital.config import Config, load_config_store
-from vital.transformations import make_transformations, DataAugs
+from vital.transformations import make_transformations
 from vital.models.vital import Vital
 from vital.models.blocks import build_3d_sincos_position_embedding
-from tools.loop_conditions import to_log, to_visualize_images
+from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tools.recon_visualize import visualized_images
+from tools.checkpointing import load_checkpoint
 
 from monai.data import Dataset, CacheDataset, ThreadDataLoader
 from torch import Generator
@@ -71,6 +72,7 @@ def main(cfg: Config):
                   rngs=nnx.Rngs(cfg.model.rng))
     optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=cfg.training.learning_rate))
 
+    # Position embeddings
     img_size = cfg.data.img_size
     grid_size = [
         img_size[0] / cfg.model.patch_size,
@@ -80,9 +82,22 @@ def main(cfg: Config):
     enc_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
     dec_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.dec_dim, dtype=dtype)
 
-    key = jax.random.PRNGKey(cfg.training.seed)
+    # Checkpointing
     (graphdef, state) = nnx.split((model, optimizer))
-    for epoch in range(0, cfg.training.epochs):
+
+    options = ocp.CheckpointManagerOptions(max_to_keep=1, )
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_load), options=options)
+    last_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_last), options=options)
+    best_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.ckpt_best), options=options)
+
+    if cfg.log.use_checkpoint:
+        start_epoch, prev_state = load_checkpoint(load_mngr)
+        state = prev_state if prev_state is not None else state
+
+    # Training preparation
+    key = jax.random.PRNGKey(cfg.training.seed)
+    ckpt_metric = np.inf
+    for epoch in range(start_epoch, cfg.training.epochs):
         # Trains
         running_loss = 0
         steps_per_epoch = math.ceil(len(monai_dict_train) / cfg.training.batch_size)
@@ -110,6 +125,7 @@ def main(cfg: Config):
                                 img_shape=cfg.data.img_size)
             vis_img = wandb.Image(vis)
             wandb.log({"train_media/viz": vis_img})
+        
 
         # Dev
         running_loss = 0
@@ -124,6 +140,7 @@ def main(cfg: Config):
             running_loss += loss
         wandb.log({"dev/mse": running_loss / steps_per_epoch})
         print(f"Dev. Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
+
         if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
             shuffled_recon_image = np.array(shuffled_recon_image)
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
@@ -136,6 +153,14 @@ def main(cfg: Config):
             wandb.log({"dev_media/viz": vis_img})
         
         # Checkpointing
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
+            if running_loss <= ckpt_metric:
+                best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                ckpt_metric = running_loss
+            last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+
+    best_mngr.wait_until_finished()   
+    last_mngr.wait_until_finished()
         
 @jax.jit
 def train_step(

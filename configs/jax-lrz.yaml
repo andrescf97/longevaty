@@ -62,13 +62,13 @@ training:
 #     token: cls
 
 log:
-    ckpt_loc: "/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/checkpoints/"
-    ckpt_best: 'sybil-vit'
-    ckpt_last: 'sybil-vit-last'
-    ckpt_load: 'no_loading'
+    ckpt_loc: "/dss/dsshome1/09/ge95diz2/lung/mae-jax/checkpoints"
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit-last'
     checkpoint_at_epoch: 2
     log_at_these_steps: 500
-    log_scans_at_these_epochs: 5
+    log_scans_at_these_epochs: 2
     cancer_cases_to_log: 0
     laterality_cases_to_log: 0
     healthy_cases_to_log: 0
@@ -82,8 +82,8 @@ model:
     enc_dim: 768
     dec_dim: 768
     dropout_rate: 0.1
-    dec_heads: 12
-    dec_depth: 12
+    dec_heads: 6
+    dec_depth: 4
     in_chans: 1
     rng: 24
 

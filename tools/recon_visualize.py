@@ -7,6 +7,10 @@ def visualized_images(gt_tokens, recon_tokens, masked_indices,
                      patch_size=(16, 16, 16), batch_size=4, img_shape=[160, 240, 128],
                      slice_pos_list=[0.4, 0.45, 0.5, 0.55, 0.6]):
     original_image_shape = [batch_size] + img_shape
+    gt_tokens = np.array(gt_tokens)
+    recon_tokens = np.array(recon_tokens)
+    masked_indices = np.array(masked_indices)
+
     gt = reconstruct_from_patches(gt_tokens, original_image_shape, patch_size)
     gt_masked = gt_tokens
     np.put_along_axis(gt_masked, masked_indices - 1, -1, axis=1)

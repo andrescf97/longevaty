@@ -1,6 +1,5 @@
 from monai import transforms
 import vital.defined_transformations as vitalforms
-import grain.python as grain
 
 def make_transformations(tf_dict):
     transforms_list = []
@@ -17,10 +16,3 @@ def make_transformations(tf_dict):
 
     _transforms = transforms.Compose(transforms_list)
     return _transforms
-
-class DataAugs(grain.MapTransform):
-    def __init__(self, transforms):
-        self.monai_transforms = transforms
-
-    def map(self, data):
-        return self.monai_transforms(data)
