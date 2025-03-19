@@ -88,7 +88,7 @@ def main(cfg: Config):
     (graphdef, state) = nnx.split((model, optimizer))
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1, )
-    load_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_load), options=options)
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
     last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
     best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
 
