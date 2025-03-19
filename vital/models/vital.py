@@ -37,8 +37,6 @@ class Vital(nnx.Module):
         )
         self.encoding_projection = nnx.Linear(enc_dim, dec_dim, rngs=rngs, dtype=dtype)
 
-        self.mask_token = nnx.Param(jnp.zeros((1, 1, dec_dim), dtype=dtype))
-
     def __call__(
         self,
         input: jax.Array,
@@ -46,16 +44,16 @@ class Vital(nnx.Module):
         dec_pos_embed: jax.Array,
         selected_indices: jax.Array,
         masked_indices: jax.Array,
+        masked_tokens: jax.Array
     ) -> jax.Array:
         B, _, _ = input.shape
         embeddings = self.encoder(input, enc_pos_embed)
         projected_embeddings = self.encoding_projection(embeddings)
 
-        masked_tokens = jnp.tile(self.mask_token, (B, masked_indices.shape[1], 1))
         all_embeddings = jnp.concatenate([projected_embeddings, masked_tokens], axis=1)
         all_indices = jnp.concatenate([selected_indices, masked_indices], axis=1)
 
-        shuffled_pos_embed = np.take_along_axis(dec_pos_embed, all_indices, axis=1)
+        shuffled_pos_embed = jnp.take_along_axis(dec_pos_embed, all_indices, axis=1)
         shuffled_recon_image = self.decoder(all_embeddings, shuffled_pos_embed)
         return shuffled_recon_image[:, 1:, :]
 

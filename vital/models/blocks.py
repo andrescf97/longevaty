@@ -158,6 +158,6 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     ], axis=1)
 
     # Reshape the embeddings to (1, num_positions, embed_dim)
-    pos_emb = jnp.concatenate([jnp.zeros_like(pos_emb), pos_emb], axis=0)
+    pos_emb = jnp.concatenate([jnp.zeros((1, pos_emb.shape[1])), pos_emb], axis=0)
     pos_emb = jnp.tile(pos_emb, (batch, 1, 1))
     return pos_emb

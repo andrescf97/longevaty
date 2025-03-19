@@ -36,13 +36,20 @@ def main(cfg: Config):
         os.environ["WANDB_MODE"] = "dryrun"
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
 
-    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, wandb.run.name)
+    if wandb.run.name is None:
+        name = "test"
+    else:
+        name = wandb.run.name
+    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, name)
     
     # Data
     with open(cfg.data.monai_dict_train) as fp:
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+
+    monai_dict_train = monai_dict_train[:1]
+    monai_dict_dev = monai_dict_dev[:1]
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
@@ -203,15 +210,17 @@ def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices)
     selected_imgs = jnp.take_along_axis(imgs, selected_indices[:, 1:, :] - 1, axis=1)
     masked_imgs = jnp.take_along_axis(imgs, masked_indices - 1, axis=1)
     selected_enc_embed = jnp.take_along_axis(enc_embed, selected_indices, axis=1)
+    masked_tokens = jnp.zeros((masked_imgs.shape[0], masked_imgs.shape[1], dec_embed.shape[2]), dtype=jnp.bfloat16)
 
     # Add cls position embed
     shuffled_recon_img = model(selected_imgs,
                       selected_enc_embed, dec_embed,
-                      selected_indices, masked_indices)
+                      selected_indices, masked_indices,
+                      masked_tokens)
 
     num_selected_patches = (selected_indices.shape[1] - 1)
     mse = optax.l2_loss(shuffled_recon_img[:, num_selected_patches:, :], masked_imgs)
-    return mse.mean(), shuffled_recon_img
+    return mse.mean()
     
 
 def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.random.PRNGKey):
