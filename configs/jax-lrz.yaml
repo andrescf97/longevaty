@@ -28,7 +28,7 @@ data:
 
 training:
     dtype: bfloat16
-    mask_ratio: 0.4
+    mask_ratio: 0.7
     seed: 0
     save_embeddings: False #save val embeddings after last epoch
     num_workers: 6
@@ -36,30 +36,11 @@ training:
     test_num_workers: 1
     prefetch_factor: 2
     shuffle: True
-    learning_rate: 1e-3
-    epochs: 25
+    learning_rate: 1e-4
+    epochs: 200
     batch_size: 10
     to_checkpoint: False
     lr_scheduler: onecycle
-
-# weighting:
-#     use_sqrt: False
-#     weight_decay_factor: 0.9
-#     decay_epochs: 5
-#     strategy: heirarchical
-#     underrepresented_weight: 5
-
-# loss:
-#     sw: 1
-#     aw: 10
-#     clw: 0
-
-# attention:
-#     strategy: separate
-#     blocks: lastn
-#     num_blocks: 4
-#     heads: [1, 2, 3, 4]
-#     token: cls
 
 log:
     ckpt_loc: "/dss/dsshome1/09/ge95diz2/lung/mae-jax/checkpoints"
