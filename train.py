@@ -220,7 +220,7 @@ def loss_fn(model, imgs, enc_embed, dec_embed, selected_indices, masked_indices)
 
     num_selected_patches = (selected_indices.shape[1] - 1)
     mse = optax.l2_loss(shuffled_recon_img[:, num_selected_patches:, :], masked_imgs)
-    return mse.mean()
+    return mse.mean(), shuffled_recon_img
     
 
 def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.random.PRNGKey):
