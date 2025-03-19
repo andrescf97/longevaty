@@ -47,9 +47,6 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-
-    monai_dict_train = monai_dict_train[:1]
-    monai_dict_dev = monai_dict_dev[:1]
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
