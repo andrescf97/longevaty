@@ -30,7 +30,7 @@ import orbax.checkpoint as ocp
 
 load_config_store()
 
-@hydra.main(config_path="./configs", config_name='jax.yaml', version_base=None)
+@hydra.main(config_path="./configs", config_name='mae.yaml', version_base=None)
 def main(cfg: Config):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
@@ -179,6 +179,7 @@ def train_step(
         masked_indices: jax.Array
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
+    model.train()
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
     (loss, shuffled_recon_image), grads = grad_fn(model, imgs, 
                                                   enc_embed, dec_embed,

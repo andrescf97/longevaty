@@ -144,7 +144,7 @@ class MaskPatchesd(transforms.MapTransform):
             data["annotation"] = patched_annotation.squeeze()
             data['has_annotation'] = True
         else:
-            annotation_mask = data["mask"].copy()
+            annotation_mask = data["mask"].clone()
             laterality = data["cancer_laterality"]
 
             if self.hull_only:
@@ -156,6 +156,8 @@ class MaskPatchesd(transforms.MapTransform):
             elif laterality[0] == 4:
                 annotation_mask[annotation_mask == 1] = 0 #get rid of hull
                 annotation_mask[annotation_mask > 3] = 0 #select left lung only
+
+            annotation_mask[annotation_mask > 0] = 1
             patched_annotation_mask = extract_patches(annotation_mask, self.patch_size).squeeze()
             data["annotation"] = patched_annotation_mask
             data['has_annotation'] = False

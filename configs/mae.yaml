@@ -1,0 +1,110 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: False
+    project_name: "mae-jax"
+    task: "mae"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
+    monai_dict_train: "/mnt/nlst_data/npy/train_vital_25.json"
+    monai_dict_dev: "/mnt/nlst_data/npy/dev_vital_25.json"
+    monai_dict_test: "/mnt/nlst_data/npy/test_vital_25.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    dtype: bfloat16
+    mask_ratio: 0.5
+    seed: 0
+    save_embeddings: False #save val embeddings after last epoch
+    num_workers: 4
+    dev_num_workers: 4
+    test_num_workers: 1
+    prefetch_factor: 4
+    shuffle: True
+    learning_rate: 1e-4
+    epochs: 1000
+    batch_size: 1
+    to_checkpoint: False
+    lr_scheduler: onecycle
+
+log:
+    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit-last'
+    checkpoint_at_epoch: 1000
+    log_at_these_steps: 100
+    log_scans_at_these_epochs: 5
+    cancer_cases_to_log: 0
+    laterality_cases_to_log: 0
+    healthy_cases_to_log: 0
+    big_nodule_no_cancer_cases_to_log: 0
+    use_checkpoint: 'test'
+    save_path_eval_predictions: '/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/predictions'
+    num_predictions: 20
+
+model:
+    patch_size: 16
+    enc_dim: 768
+    dec_dim: 768
+    dropout_rate: 0.1
+    dec_heads: 6
+    dec_depth: 4
+    in_chans: 1
+    rng: 24
+
+transform:
+    train_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        Patchify_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+        ToNumpyd:
+            keys: ['image']
+            allow_missing_keys: True
+            dtype: bfloat16
+
+    dev_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        Patchify_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+        ToNumpyd:
+            keys: ['image']
+            allow_missing_keys: True
+            dtype: bfloat16

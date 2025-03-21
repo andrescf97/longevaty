@@ -5,10 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "train",
+            "name": "mae train",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/train.py",
+            "program": "${workspaceFolder}/mae.py",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        
+        {
+            "name": "survival train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/survival.py",
             "console": "integratedTerminal",
             "justMyCode": false
         }
