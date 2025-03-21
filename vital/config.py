@@ -100,9 +100,13 @@ class AttentionConfig:
 @dataclass
 class LoggingConfig:
     ckpt_loc: str = 'checkpoints'
+    ckpt_load_loc: str = 'checkpoints'
+    mae_ckpt_load: str = 'sybil-vit-last'
+    mae_use_checkpoint: str = MISSING
     ckpt_best: str = 'sybil-vit'
     ckpt_last: str = 'sybil-vit-last'
     ckpt_load: str = 'sybil-vit-last'
+    use_checkpoint: str = MISSING
     checkpoint_at_epoch: int = MISSING
     log_at_these_steps: int = MISSING
     log_scans_at_these_epochs: int = MISSING
@@ -111,7 +115,6 @@ class LoggingConfig:
     healthy_cases_to_log: int = MISSING
     big_nodule_no_cancer_cases_to_log: int = MISSING
     save_path_eval_predictions: str = MISSING
-    use_checkpoint: str = MISSING
     num_predictions: int = MISSING
 
 @dataclass

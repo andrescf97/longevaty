@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: False
+    dry_run: True
     project_name: "survival-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -58,10 +58,14 @@ loss:
     aw: 1
 
 log:
-    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
+    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    mae_ckpt_load: 'vit-last'
+    mae_use_checkpoint: 'sage-water-57'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit-last'
+    use_checkpoint: 'test'
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
     log_scans_at_these_epochs: 5
@@ -69,7 +73,6 @@ log:
     laterality_cases_to_log: 0
     healthy_cases_to_log: 0
     big_nodule_no_cancer_cases_to_log: 0
-    use_checkpoint: 'test'
     save_path_eval_predictions: '/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/predictions'
     num_predictions: 20
 

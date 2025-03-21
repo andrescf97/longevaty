@@ -11,6 +11,7 @@ import math
 from vital.config import Config, load_config_store
 from vital.transformations import make_transformations
 from vital.models.lungevity import LungeVity
+from vital.models.vital import Vital
 from vital.models.blocks import build_3d_sincos_position_embedding
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
@@ -101,6 +102,30 @@ def main(cfg: Config):
     )
     optimizer = nnx.Optimizer(model=model, tx=optax.adamw(learning_rate=scheduler))
 
+    # Load checkpoint
+    (graphdef, state) = nnx.split((model, optimizer))
+
+    options = ocp.CheckpointManagerOptions(max_to_keep=1)
+    mae_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint, cfg.log.mae_ckpt_load), options=options)
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
+    last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
+    best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
+
+    if cfg.log.use_checkpoint:
+        start_epoch, prev_state = load_checkpoint(load_mngr)
+        state = prev_state if prev_state is not None else state
+    
+    if prev_state is None:
+        mae_model = nnx.eval_shape(
+                        lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
+                                      dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
+                                      dtype=dtype, rngs=nnx.Rngs(cfg.model.rng))
+                    )
+        _, mae_state = nnx.split(mae_model)
+        s = mae_mngr.restore(mae_mngr.latest_step())
+        nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))
+        state[0].encoder = mae_state.encoder
+
     # Position embeddings
     img_size = cfg.data.img_size
     grid_size = [
@@ -109,9 +134,7 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
-
     start_epoch = 0
-    (graphdef, state) = nnx.split((model, optimizer))
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
@@ -171,6 +194,7 @@ def train_step(
         loss_weights: tuple
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
+    model.train()
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
     (loss, (survival_loss, annotation_loss, probs)), grads = grad_fn(model, images, annotations, y_seq, y_mask, pos_embed, loss_weights[0], loss_weights[1])
     optimizer.update(grads)
@@ -189,6 +213,7 @@ def dev_step(
         loss_weights: tuple
 ):
     (model, _) = nnx.merge(graphdef, state)
+    model.eval()
     loss, (survival_loss, annotation_loss, probs) = loss_fn(model, images, annotations, y_seq, y_mask, pos_embed, loss_weights[0], loss_weights[1])
     return loss, (survival_loss, annotation_loss), probs
 
@@ -216,6 +241,13 @@ def collate_fn(batch):
     for key in batch:
         batch[key] = jnp.array(np.stack(batch[key], axis=0), dtype=jnp.bfloat16)
     return batch
+
+def process_raw_dict(raw_state_dict):
+  flattened = nnx.traversals.flatten_mapping(raw_state_dict)
+  # Cut the '.value' postfix on every leaf path.
+  flattened = {(path[:-1] if path[-1] == 'value' else path): value
+               for path, value in flattened.items()}
+  return nnx.traversals.unflatten_mapping(flattened)
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
