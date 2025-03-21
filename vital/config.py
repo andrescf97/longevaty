@@ -48,13 +48,19 @@ class TrainingConfig:
     test_num_workers: int = 1
     prefetch_factor: int = 2
     shuffle: bool = True
-    learning_rate: float = MISSING
     epochs: int = MISSING
     batch_size: int = MISSING
     to_checkpoint: bool = MISSING
-    lr_scheduler: LRScheduler = MISSING
     save_embeddings: bool = MISSING
+    underrepresented_weight: float = 14
 
+@dataclass
+class OptimizerConfig:
+    lr_scheduler: LRScheduler = MISSING
+    peak_lr: float = MISSING
+    init_lr: float = 1e-5 
+    end_lr: float = 1e-6
+    warmup_epochs: int = 5
 
 class WeightingStrategy(Enum):
     heirarchical = 0
@@ -73,7 +79,6 @@ class WeightingConfig:
 class LossConfig:
     sw: float = MISSING
     aw: float = MISSING
-    clw: float = MISSING
 
 class AttentionStrategy(Enum):
     joint = 0
@@ -88,11 +93,9 @@ class AttentionToken(Enum):
 
 @dataclass
 class AttentionConfig:
-    strategy: AttentionStrategy = AttentionStrategy.joint
-    blocks: AttentionBlocks = AttentionBlocks.lastn
-    num_blocks: int = MISSING
-    heads: List[int] = MISSING
-    token: AttentionToken = AttentionToken.cls
+    heads: int = MISSING
+    use_cls: bool = MISSING
+    use_mean_token: bool = MISSING
 
 @dataclass
 class LoggingConfig:
@@ -117,6 +120,8 @@ class ModelConfig:
     enc_dim: int = MISSING
     dec_dim: int = MISSING
     dropout_rate: float = MISSING
+    enc_heads: int = 12
+    enc_depth: int = 12
     dec_heads: int = MISSING
     dec_depth: int = MISSING
     in_chans: int = 1
@@ -142,6 +147,9 @@ class Config:
     wandb: WandBConfig = field(default_factory=WandBConfig)
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    attention: AttentionConfig = field(default=AttentionConfig)
     training: TrainingConfig = field(default=TrainingConfig)
+    optimizer: OptimizerConfig = field(default=OptimizerConfig)
+    loss: LossConfig = field(default=LossConfig)
     log: LoggingConfig = field(default_factory=LoggingConfig)
     transform: TransformsConfig = field(default_factory=TransformsConfig)  

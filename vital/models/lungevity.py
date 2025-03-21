@@ -42,6 +42,7 @@ class LungeVity(nnx.Module):
         dtype: type = jnp.bfloat16,
         use_cls: bool = False,
         use_mean_token: bool = False,
+        guided_attention_heads: int = 8,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ) -> nnx.Module:
@@ -69,8 +70,8 @@ class LungeVity(nnx.Module):
         if use_cls and use_mean_token:
             self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y, z], axis=-1)
 
-        self.mha = MultiHeadAttention(num_heads=8, in_features=hidden_dim, dtype=dtype, rngs=rngs,
-                                      dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=False,)
+        self.mha = MultiHeadAttention(num_heads=guided_attention_heads, in_features=hidden_dim, dtype=dtype, rngs=rngs,
+                                      dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=True)
 
         self.classifier = nnx.Sequential(*[
             nnx.Linear(hidden, hidden_dim, rngs=rngs, dtype=dtype),

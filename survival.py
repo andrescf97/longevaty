@@ -50,9 +50,6 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
 
-    monai_dict_train = monai_dict_train[:100]
-    monai_dict_dev = monai_dict_dev[:100]
-
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -67,7 +64,7 @@ def main(cfg: Config):
     dev_dataset_gnr.manual_seed(0)
 
     labels = [sample['y'] for sample in monai_dict_train]
-    y_weight = np.array([1, 14], dtype=np.float16)
+    y_weight = np.array([1, cfg.training.underrepresented_weight], dtype=np.float16)
     samples_weights = y_weight[np.array(labels)]
     sampler = WeightedRandomSampler(
         weights=samples_weights,
@@ -89,16 +86,18 @@ def main(cfg: Config):
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = LungeVity(patch_size=cfg.model.patch_size, hidden_dim=cfg.model.enc_dim,
-                      blocks=12, heads=12,
+                      blocks=cfg.model.dec_depth, heads=cfg.model.enc_heads,
+                      use_cls=cfg.attention.use_cls, use_mean_token=cfg.attention.use_mean_token,
+                      guided_attention_heads=cfg.attention.heads,
                       dropout_rate=cfg.model.dropout_rate,
                       dtype=dtype,
                       rngs=nnx.Rngs(cfg.model.rng))
     scheduler = optax.schedules.warmup_cosine_decay_schedule(
-        init_value=1e-5,
-        peak_value=1e-3,
-        warmup_steps=5 * (len(monai_dict_train) // cfg.training.batch_size),
-        decay_steps=50 * (len(monai_dict_train) // cfg.training.batch_size),
-        end_value=1e-6
+        init_value=cfg.optimizer.init_lr,
+        peak_value=cfg.optimizer.peak_lr,
+        warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        end_value=cfg.optimizer.end_lr
     )
     optimizer = nnx.Optimizer(model=model, tx=optax.adamw(learning_rate=scheduler))
 
@@ -113,7 +112,6 @@ def main(cfg: Config):
 
     start_epoch = 0
     (graphdef, state) = nnx.split((model, optimizer))
-    key = jax.random.key(seed=cfg.training.seed)
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
@@ -124,7 +122,7 @@ def main(cfg: Config):
         golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
         censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
         for step, batch in enumerate(train_loader):
-            state, loss, segregated_loss, _probs = train_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (1, 1))
+            state, loss, segregated_loss, _probs = train_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
@@ -149,7 +147,7 @@ def main(cfg: Config):
         censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
         steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
         for step, batch in enumerate(dev_loader):
-            loss, segregated_loss, _probs = dev_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (1, 1))
+            loss, segregated_loss, _probs = dev_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
@@ -211,7 +209,7 @@ def loss_fn(model, images, annotations, y_seq, y_mask, pos_embed, sw, aw):
     attn_weights = nnx.log_softmax(attn_weights)
     annotation_loss = optax.kl_divergence(attn_weights, annotations)
     annotation_loss = annotation_loss.mean()
-    return sw * survival_loss + aw * annotation_loss, (survival_loss, annotation_loss, jax.nn.sigmoid(n_year_logits))
+    return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, jax.nn.sigmoid(n_year_logits))
 
 def collate_fn(batch):
     batch = pd.DataFrame(batch).to_dict(orient="list")
