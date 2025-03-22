@@ -51,7 +51,6 @@ class TrainingConfig:
     epochs: int = MISSING
     batch_size: int = MISSING
     to_checkpoint: bool = MISSING
-    save_embeddings: bool = MISSING
     underrepresented_weight: float = 14
 
 @dataclass
@@ -77,8 +76,8 @@ class WeightingConfig:
 
 @dataclass
 class LossConfig:
-    sw: float = MISSING
-    aw: float = MISSING
+    sw: float = 1.0
+    aw: float = 1.0
 
 class AttentionStrategy(Enum):
     joint = 0
@@ -93,16 +92,16 @@ class AttentionToken(Enum):
 
 @dataclass
 class AttentionConfig:
-    heads: int = MISSING
-    use_cls: bool = MISSING
-    use_mean_token: bool = MISSING
+    heads: int = 12
+    use_cls: bool = True
+    use_mean_token: bool = True
 
 @dataclass
 class LoggingConfig:
     ckpt_loc: str = 'checkpoints'
     ckpt_load_loc: str = 'checkpoints'
     mae_ckpt_load: str = 'sybil-vit-last'
-    mae_use_checkpoint: str = MISSING
+    mae_use_checkpoint: str = 'test'
     ckpt_best: str = 'sybil-vit'
     ckpt_last: str = 'sybil-vit-last'
     ckpt_load: str = 'sybil-vit-last'
@@ -110,11 +109,6 @@ class LoggingConfig:
     checkpoint_at_epoch: int = MISSING
     log_at_these_steps: int = MISSING
     log_scans_at_these_epochs: int = MISSING
-    cancer_cases_to_log: int = MISSING
-    laterality_cases_to_log: int = MISSING
-    healthy_cases_to_log: int = MISSING
-    big_nodule_no_cancer_cases_to_log: int = MISSING
-    save_path_eval_predictions: str = MISSING
     num_predictions: int = MISSING
 
 @dataclass

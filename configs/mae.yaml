@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: False
+    dry_run: True
     project_name: "mae-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -30,17 +30,21 @@ training:
     dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
-    save_embeddings: False #save val embeddings after last epoch
     num_workers: 4
     dev_num_workers: 4
     test_num_workers: 1
     prefetch_factor: 4
     shuffle: True
-    learning_rate: 1e-4
     epochs: 1000
     batch_size: 1
     to_checkpoint: False
+
+optimizer:
     lr_scheduler: onecycle
+    peak_lr: 1.5e-4
+    init_lr: 5e-5
+    end_lr: 8e-6
+    warmup_epochs: 50
 
 log:
     ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
@@ -50,12 +54,7 @@ log:
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
     log_scans_at_these_epochs: 5
-    cancer_cases_to_log: 0
-    laterality_cases_to_log: 0
-    healthy_cases_to_log: 0
-    big_nodule_no_cancer_cases_to_log: 0
     use_checkpoint: 'test'
-    save_path_eval_predictions: '/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/predictions'
     num_predictions: 20
 
 model:
@@ -63,6 +62,8 @@ model:
     enc_dim: 768
     dec_dim: 768
     dropout_rate: 0.1
+    enc_heads: 12
+    enc_depth: 12
     dec_heads: 6
     dec_depth: 4
     in_chans: 1
@@ -81,6 +82,29 @@ transform:
             mode: ["trilinear", "nearest", "nearest"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
+        RandFlipd_1:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 0
+        RandFlipd_2:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 1
+        RandFlipd_3:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 2
+        RandRotated:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+            prob: 0.5
+            range_x: 0.2
+            range_y: 0.2
+            range_z: 0.2
+            mode: ['bilinear', 'nearest', 'nearest']
         Patchify_our:
             keys: ['mask']
             patch_size: [16, 16, 16]

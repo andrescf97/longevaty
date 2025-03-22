@@ -10,6 +10,8 @@ class Vital(nnx.Module):
         patch_size: int = 16,
         enc_dim: int = 768,
         dec_dim: int = 768,
+        enc_blocks: int = 12,
+        enc_heads: int = 12,
         dec_blocks: int = 12,
         dec_heads: int = 12,
         drouput_rate: float = 0.2,
@@ -19,8 +21,8 @@ class Vital(nnx.Module):
     ):
         self.encoder = MAEVitEncoder(
             patch_size=patch_size,
-            num_blocks=12,
-            num_heads=12,
+            num_blocks=enc_blocks,
+            num_heads=enc_heads,
             hidden_size=enc_dim,
             dropout_rate=drouput_rate,
             dtype=dtype,

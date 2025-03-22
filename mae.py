@@ -1,5 +1,9 @@
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
+os.environ['XLA_FLAGS'] = (
+    '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_enable_latency_hiding_scheduler=true '
+)
 
 import hydra
 from omegaconf import OmegaConf
@@ -47,7 +51,7 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-    
+
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
@@ -73,10 +77,17 @@ def main(cfg: Config):
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
-                  dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
-                  dtype=dtype,
+                  dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads,
+                  drouput_rate=cfg.model.dropout_rate, dtype=dtype,
                   rngs=nnx.Rngs(cfg.model.rng))
-    optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=cfg.training.learning_rate))
+    scheduler = optax.schedules.warmup_cosine_decay_schedule(
+        init_value=cfg.optimizer.init_lr,
+        peak_value=cfg.optimizer.peak_lr,
+        warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        end_value=cfg.optimizer.end_lr
+    )
+    optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=scheduler))
 
     # Position embeddings
     img_size = cfg.data.img_size
@@ -106,7 +117,7 @@ def main(cfg: Config):
     for epoch in range(start_epoch, cfg.training.epochs):
         # Trains
         running_loss = 0
-        steps_per_epoch = math.ceil(len(monai_dict_train) / cfg.training.batch_size)
+        steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
         for step, batch in enumerate(train_loader):
             B, n, _ = batch['image'].shape
             key, rng = jax.random.split(key)
@@ -117,10 +128,10 @@ def main(cfg: Config):
             running_loss += loss
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
                 wandb.log({"train/loss_step": loss})
-                print(f"Epoch {epoch}, step {step} / {steps_per_epoch}: loss {loss}")
+                jax.debug.print("Epoch {epoch}, step {step} / {steps_per_epoch}: loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
 
         wandb.log({"train/mse": running_loss / steps_per_epoch})
-        print(f"Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
+        jax.debug.print("Train. Epoch {epoch} / {epochs}: Loss {loss}", epoch = epoch, epochs=cfg.training.epochs, loss = (running_loss / steps_per_epoch))
         if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
             shuffled_recon_image = np.array(shuffled_recon_image)
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
@@ -131,11 +142,10 @@ def main(cfg: Config):
                                 img_shape=cfg.data.img_size)
             vis_img = wandb.Image(vis)
             wandb.log({"train_media/viz": vis_img})
-        
 
         # Dev
         running_loss = 0
-        steps_per_epoch = math.ceil(len(monai_dict_dev) / cfg.training.batch_size)
+        steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
         for step, batch in enumerate(dev_loader):
             B, n, _ = batch['image'].shape
             key, rng = jax.random.split(key)
@@ -145,7 +155,7 @@ def main(cfg: Config):
                                                     selected_indices, masked_indices)
             running_loss += loss
         wandb.log({"dev/mse": running_loss / steps_per_epoch})
-        print(f"Dev. Epoch {epoch} / {cfg.training.epochs}: Loss {running_loss / steps_per_epoch}")
+        jax.debug.print("Dev. Epoch {epoch} / {epochs}: Loss {loss}", epoch = epoch, epochs=cfg.training.epochs, loss = (running_loss / steps_per_epoch))
 
         if to_visualize_images(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
             shuffled_recon_image = np.array(shuffled_recon_image)
