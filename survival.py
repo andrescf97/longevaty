@@ -87,7 +87,7 @@ def main(cfg: Config):
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = LungeVity(patch_size=cfg.model.patch_size, hidden_dim=cfg.model.enc_dim,
-                      blocks=cfg.model.dec_depth, heads=cfg.model.enc_heads,
+                      blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads,
                       use_cls=cfg.attention.use_cls, use_mean_token=cfg.attention.use_mean_token,
                       guided_attention_heads=cfg.attention.heads,
                       dropout_rate=cfg.model.dropout_rate,
@@ -125,6 +125,10 @@ def main(cfg: Config):
         s = mae_mngr.restore(mae_mngr.latest_step())
         nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))
         state[0].encoder = mae_state.encoder
+
+        del s
+        del mae_state
+        del mae_mngr
 
     # Position embeddings
     img_size = cfg.data.img_size
@@ -179,7 +183,8 @@ def main(cfg: Config):
             golds[step, :] = np.array(batch['y'])
             censors[step, :] = np.array(batch['time_at_event'])
 
-        compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
+        wandb.log({"dev/loss": running_loss / steps_per_epoch})
+        compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
     return
 
 @jax.jit
