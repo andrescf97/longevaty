@@ -138,16 +138,27 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
+
+    # Init running value arrays
+    steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
+    dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
+
+    probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
+    golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
+    censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
+
+    dev_probs = np.zeros((dev_steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
+    dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
+    dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     start_epoch = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
-        steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
 
         # Init storage variables
         running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
-        probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
-        golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
-        censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
+        probs.fill(0)
+        golds.fill(0)
+        censors.fill(0)
         for step, batch in enumerate(train_loader):
             state, loss, segregated_loss, _probs = train_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
@@ -169,22 +180,21 @@ def main(cfg: Config):
 
         # Dev
         running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
-        probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
-        golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
-        censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
-        steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
+        dev_probs.fill(0)
+        dev_golds.fill(0)
+        dev_censors.fill(0)
         for step, batch in enumerate(dev_loader):
             loss, segregated_loss, _probs = dev_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
-            probs[step, :, :] = np.array(_probs)
-            golds[step, :] = np.array(batch['y'])
-            censors[step, :] = np.array(batch['time_at_event'])
+            dev_probs[step, :, :] = np.array(_probs)
+            dev_golds[step, :] = np.array(batch['y'])
+            dev_censors[step, :] = np.array(batch['time_at_event'])
 
-        wandb.log({"dev/loss": running_loss / steps_per_epoch})
-        compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+        wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
+        compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
     return
 
 @jax.jit
