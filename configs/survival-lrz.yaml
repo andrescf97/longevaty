@@ -30,7 +30,6 @@ training:
     dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
-    save_embeddings: False #save val embeddings after last epoch
     num_workers: 8
     dev_num_workers: 6
     test_num_workers: 1
@@ -69,11 +68,6 @@ log:
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
     log_scans_at_these_epochs: 5
-    cancer_cases_to_log: 0
-    laterality_cases_to_log: 0
-    healthy_cases_to_log: 0
-    big_nodule_no_cancer_cases_to_log: 0
-    save_path_eval_predictions: '/dss/dsshome1/01/ga74nit2/projects/iderha/sybil-iderha/predictions'
     num_predictions: 20
 
 model:

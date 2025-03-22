@@ -1,5 +1,9 @@
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
+os.environ['XLA_FLAGS'] = (
+    '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_enable_latency_hiding_scheduler=true '
+)
 
 import hydra
 from omegaconf import OmegaConf
@@ -117,10 +121,11 @@ def main(cfg: Config):
     
     if prev_state is None:
         mae_model = nnx.eval_shape(
-                        lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
-                                      dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, drouput_rate=cfg.model.dropout_rate,
-                                      dtype=dtype, rngs=nnx.Rngs(cfg.model.rng))
-                    )
+            lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
+                            dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads,
+                            drouput_rate=cfg.model.dropout_rate, dtype=dtype,
+                            rngs=nnx.Rngs(cfg.model.rng))
+        )
         _, mae_state = nnx.split(mae_model)
         s = mae_mngr.restore(mae_mngr.latest_step())
         nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))

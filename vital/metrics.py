@@ -1,15 +1,10 @@
 import wandb
 from collections import OrderedDict
 from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
     roc_auc_score,
     precision_recall_curve,
     auc,
     average_precision_score,
-    matthews_corrcoef
 )
 import numpy as np
 from lifelines.utils.btree import _BTree
