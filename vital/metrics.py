@@ -65,21 +65,20 @@ def get_risk_metrics(censor_times, probs, golds, max_followup, mode):
 
     return stats_dict
 
+def include_exam_and_determine_label(censor_time, gold, followup, fup_lower_bound):
+    valid_pos = gold and censor_time <= followup and censor_time > fup_lower_bound
+    valid_neg = censor_time >= followup
+    included, label = (valid_pos or valid_neg), valid_pos
+    return included, label
 
 def compute_auc_at_followup(probs, censor_times, golds, followup, fup_lower_bound=-1):
     golds, censor_times = golds.ravel(), censor_times.ravel()
     if len(probs.shape) == 3:
         probs = probs.reshape(probs.shape[0] * probs.shape[1], probs.shape[2])
 
-    def include_exam_and_determine_label(prob_arr, censor_time, gold):
-        valid_pos = gold and censor_time <= followup and censor_time > fup_lower_bound
-        valid_neg = censor_time >= followup
-        included, label = (valid_pos or valid_neg), valid_pos
-        return included, label
-
     probs_for_eval, golds_for_eval = [], []
     for prob_arr, censor_time, gold in zip(probs, censor_times, golds):
-        include, label = include_exam_and_determine_label(prob_arr, censor_time, gold)
+        include, label = include_exam_and_determine_label(censor_time, gold, followup, fup_lower_bound)
         if include:
             probs_for_eval.append(prob_arr[followup])
             golds_for_eval.append(label)
