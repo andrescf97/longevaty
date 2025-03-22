@@ -58,8 +58,8 @@ loss:
     aw: 1
 
 log:
-    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
-    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_loc: "/dss/dsshome1/09/ge95diz2/lung/mae-jax/checkpoints/survival"
+    ckpt_load_loc: "/dss/dsshome1/09/ge95diz2/lung/mae-jax/checkpoints"
     mae_ckpt_load: 'vit-last'
     mae_use_checkpoint: 'sage-water-57'
     ckpt_best: 'vit'
