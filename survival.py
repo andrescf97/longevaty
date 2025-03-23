@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 import optax
 import orbax.checkpoint as ocp
+from dlpack import asdlpack
 
 load_config_store()
 
@@ -79,11 +80,9 @@ def main(cfg: Config):
     )
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=False, sampler=sampler,
-                              collate_fn=collate_fn,
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                               persistent_workers=True, pin_memory=False, drop_last=True)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
-                        collate_fn=collate_fn,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
@@ -165,14 +164,26 @@ def main(cfg: Config):
         golds.fill(0)
         censors.fill(0)
         for step, batch in enumerate(train_loader):
-            state, loss, segregated_loss, _probs = train_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
+            images_dl = asdlpack(batch['image'])
+            images = jnp.from_dlpack(images_dl)
+
+            annotations_dl = asdlpack(batch['annotation'])
+            annotations = jnp.from_dlpack(annotations_dl)
+
+            y_seq_dl = asdlpack(batch['y_seq'])
+            y_seq = jnp.from_dlpack(y_seq_dl)
+
+            y_mask_dl = asdlpack(batch['y_mask'])
+            y_mask = jnp.from_dlpack(y_mask_dl)
+
+            state, loss, segregated_loss, _probs = train_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
             probs[step, :, :] = np.array(_probs)
-            golds[step, :] = np.array(batch['y'])
-            censors[step, :] = np.array(batch['time_at_event'])
+            golds[step, :] = batch['y'].numpy()
+            censors[step, :] = batch['time_at_event'].numpy()
             
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
                 jax.debug.print("Epoch {epoch}. Step {step}/{steps_per_epoch}: Loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
@@ -189,14 +200,25 @@ def main(cfg: Config):
         dev_golds.fill(0)
         dev_censors.fill(0)
         for step, batch in enumerate(dev_loader):
-            loss, segregated_loss, _probs = dev_step(graphdef, state, batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask'], pos_embed, (cfg.loss.sw, cfg.loss.aw))
+            images_dl = asdlpack(batch['image'])
+            images = jnp.from_dlpack(images_dl)
+
+            annotations_dl = asdlpack(batch['annotation'])
+            annotations = jnp.from_dlpack(annotations_dl)
+
+            y_seq_dl = asdlpack(batch['y_seq'])
+            y_seq = jnp.from_dlpack(y_seq_dl)
+
+            y_mask_dl = asdlpack(batch['y_mask'])
+            y_mask = jnp.from_dlpack(y_mask_dl)
+            loss, segregated_loss, _probs = dev_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw))
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
             dev_probs[step, :, :] = np.array(_probs)
-            dev_golds[step, :] = np.array(batch['y'])
-            dev_censors[step, :] = np.array(batch['time_at_event'])
+            golds[step, :] = batch['y'].numpy()
+            censors[step, :] = batch['time_at_event'].numpy()
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
         compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")

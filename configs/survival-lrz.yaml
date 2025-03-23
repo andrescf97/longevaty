@@ -87,6 +87,10 @@ transform:
         LoadImaged:
             keys: ['image', 'mask', 'annotation']
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image', 'annotation']
+            allow_missing_keys: True 
+            device: "cuda"
         EnsureChannelFirstd:
             keys: ['image', 'mask', 'annotation']
             allow_missing_keys: True
@@ -148,9 +152,11 @@ transform:
             patch_size: [16, 16, 16]
             hull_only: False
             use_annotations: True
-        ToNumpyd:
-            keys: ['image']
+        ToTensord:
+            keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
             dtype: bfloat16
 
     dev_tf:
@@ -170,7 +176,9 @@ transform:
             patch_size: [16, 16, 16]
             hull_only: False
             use_annotations: True
-        ToNumpyd:
-            keys: ['image']
+        ToTensord:
+            keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
             dtype: bfloat16

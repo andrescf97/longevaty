@@ -72,63 +72,69 @@ model:
 transform:
     train_tf:
         LoadImaged:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image']
+            allow_missing_keys: True 
+            device: "cuda"
         EnsureChannelFirstd:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
         Resized:
-            keys: ['image', 'mask', 'annotation']
-            mode: ["trilinear", "nearest", "nearest"]
+            keys: ['image']
+            mode: ["trilinear"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
         RandFlipd_1:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
             prob: 0.33
             spatial_axis: 0
         RandFlipd_2:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
             prob: 0.33
             spatial_axis: 1
         RandFlipd_3:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
             prob: 0.33
             spatial_axis: 2
         RandRotated:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
             prob: 0.5
             range_x: 0.2
             range_y: 0.2
             range_z: 0.2
-            mode: ['bilinear', 'nearest', 'nearest']
+            mode: ['bilinear']
         Patchify_our:
             keys: ['mask']
             patch_size: [16, 16, 16]
-        ToNumpyd:
+        ToTensord:
             keys: ['image']
             allow_missing_keys: True
+            track_meta: False
             dtype: bfloat16
 
     dev_tf:
         LoadImaged:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
         EnsureChannelFirstd:
-            keys: ['image', 'mask', 'annotation']
+            keys: ['image']
             allow_missing_keys: True
         Resized:
-            keys: ['image', 'mask', 'annotation']
-            mode: ["trilinear", "nearest", "nearest"]
+            keys: ['image']
+            mode: ["trilinear"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
         Patchify_our:
             keys: ['mask']
             patch_size: [16, 16, 16]
-        ToNumpyd:
+        ToTensord:
             keys: ['image']
             allow_missing_keys: True
+            track_meta: False
             dtype: bfloat16

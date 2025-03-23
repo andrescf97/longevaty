@@ -32,6 +32,8 @@ import pandas as pd
 import optax
 import orbax.checkpoint as ocp
 
+from dlpack import asdlpack
+
 load_config_store()
 
 @hydra.main(config_path="./configs", config_name='mae.yaml', version_base=None)
@@ -64,12 +66,10 @@ def main(cfg: Config):
     dev_dataset_gnr.manual_seed(0)
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=cfg.training.shuffle, 
-                              collate_fn=collate_fn,
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                               persistent_workers=True, pin_memory=False, drop_last=True,
                               generator=dataset_gnr)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
-                        collate_fn=collate_fn,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
@@ -120,9 +120,11 @@ def main(cfg: Config):
         steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
         for step, batch in enumerate(train_loader):
             B, n, _ = batch['image'].shape
+            dl = asdlpack(batch['image'])
+            images = jnp.from_dlpack(dl)
             key, rng = jax.random.split(key)
             masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
-            loss, shuffled_recon_image, state = train_step(graphdef, state, batch['image'], 
+            loss, shuffled_recon_image, state = train_step(graphdef, state, images, 
                                                     enc_embed, dec_embed,
                                                     selected_indices, masked_indices)
             running_loss += loss
@@ -148,9 +150,11 @@ def main(cfg: Config):
         steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
         for step, batch in enumerate(dev_loader):
             B, n, _ = batch['image'].shape
+            dl = asdlpack(batch['image'])
+            images = jnp.from_dlpack(dl)
             key, rng = jax.random.split(key)
             masked_indices, selected_indices = get_masked_patches(B, n, cfg.training.mask_ratio, rng)
-            loss, shuffled_recon_image = dev_step(graphdef, state, batch['image'], 
+            loss, shuffled_recon_image = dev_step(graphdef, state, images, 
                                                     enc_embed, dec_embed,
                                                     selected_indices, masked_indices)
             running_loss += loss
