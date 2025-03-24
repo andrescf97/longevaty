@@ -56,6 +56,9 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
 
+    monai_dict_train = monai_dict_train[:100]
+    monai_dict_dev = monai_dict_dev[:100]
+
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -217,8 +220,8 @@ def main(cfg: Config):
             running_survival_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
             dev_probs[step, :, :] = np.array(_probs)
-            golds[step, :] = batch['y'].numpy()
-            censors[step, :] = batch['time_at_event'].numpy()
+            dev_golds[step, :] = batch['y'].numpy()
+            dev_censors[step, :] = batch['time_at_event'].numpy()
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
         compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
