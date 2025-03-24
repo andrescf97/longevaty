@@ -56,9 +56,6 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
 
-    monai_dict_train = monai_dict_train[:100]
-    monai_dict_dev = monai_dict_dev[:100]
-
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
