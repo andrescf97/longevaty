@@ -27,6 +27,26 @@ def compute_and_log_metrics_risk(censor_times, probs, golds, censoring_distribut
     wandb.log(risk_metrics)
     return survival_metrics, risk_metrics
 
+def log_targets(preds, golds, censors, num_prediction, mode="train"):
+    preds = np.round(preds, 3)
+
+    non_cancer_n_idx = np.where(golds == 0)[0][:num_prediction]
+    cancer_n_idx = np.where(golds == 1)[0][:num_prediction]
+
+
+    print("="*80)
+    print(f"Mode: {mode}")
+    print("Predictions. Non-cancer")
+    print(f"Censors: {censors[non_cancer_n_idx]}")
+    print(f"Pred.")
+    print(f"{preds[non_cancer_n_idx]}")
+
+    print("\n\nPredictions. cancer")
+    print(f"Censors: {censors[cancer_n_idx]}")
+    print(f"Pred.")
+    print(f"{preds[cancer_n_idx]}")
+    print("="*80)
+
 
 def get_survival_metrics(censor_times, probs, golds, censoring_distribution, max_followup, mode):
     stats_dict = {}

@@ -17,7 +17,7 @@ from vital.transformations import make_transformations
 from vital.models.lungevity import LungeVity
 from vital.models.vital import Vital
 from vital.models.blocks import build_3d_sincos_position_embedding
-from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk
+from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tools.recon_visualize import visualized_images
 from tools.checkpointing import load_checkpoint
@@ -193,6 +193,7 @@ def main(cfg: Config):
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
+        log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
         # Dev
         running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
@@ -222,6 +223,7 @@ def main(cfg: Config):
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
         compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+        log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
     return
 
 @jax.jit
