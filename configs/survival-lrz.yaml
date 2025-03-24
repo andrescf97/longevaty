@@ -68,7 +68,7 @@ log:
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
     log_scans_at_these_epochs: 5
-    num_predictions: 20
+    num_predictions: 5
 
 model:
     patch_size: 16
