@@ -53,6 +53,9 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+    
+    monai_dict_train = monai_dict_train[:100]
+    monai_dict_dev = monai_dict_dev[:100]
 
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
@@ -139,7 +142,7 @@ def main(cfg: Config):
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
             unpermute_indices = jnp.argsort(all_indices, axis=1)
             recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
-            vis = visualized_images(batch['image'], recon_image, masked_indices,
+            vis = visualized_images(images, recon_image, masked_indices,
                                 patch_size=[cfg.model.patch_size]*3, batch_size=cfg.training.batch_size,
                                 img_shape=cfg.data.img_size)
             vis_img = wandb.Image(vis)
@@ -166,7 +169,7 @@ def main(cfg: Config):
             all_indices = jnp.concatenate([selected_indices[:, 1:, :], masked_indices], axis=1) - 1
             unpermute_indices = jnp.argsort(all_indices, axis=1)
             recon_image = np.take_along_axis(shuffled_recon_image, unpermute_indices, axis=1)
-            vis = visualized_images(batch['image'], recon_image, masked_indices,
+            vis = visualized_images(images, recon_image, masked_indices,
                                 patch_size=[cfg.model.patch_size]*3, batch_size=cfg.training.batch_size,
                                 img_shape=cfg.data.img_size)
             vis_img = wandb.Image(vis)
