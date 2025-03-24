@@ -117,6 +117,7 @@ transform:
             allow_missing_keys: True
             track_meta: False
             dtype: bfloat16
+            device: "cuda"
 
     dev_tf:
         LoadImaged:
@@ -138,3 +139,4 @@ transform:
             allow_missing_keys: True
             track_meta: False
             dtype: bfloat16
+            device: "cuda"
