@@ -47,7 +47,7 @@ optimizer:
     warmup_epochs: 50
 
 log:
-    ckpt_loc: "/dss/dsshome1/09/ge95diz2/lung/mae-jax/checkpoints"
+    ckpt_loc: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/model_checkpoints/jax"
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit-last'
