@@ -103,7 +103,8 @@ def main(cfg: Config):
         decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
         end_value=cfg.optimizer.end_lr
     )
-    optimizer = nnx.Optimizer(model=model, tx=optax.adamw(learning_rate=scheduler))
+    tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
+    optimizer = nnx.Optimizer(model=model, tx=tx)
 
     # Load checkpoint
     (graphdef, state) = nnx.split((model, optimizer))
@@ -190,6 +191,7 @@ def main(cfg: Config):
                 wandb.log({"train/loss_step": loss})
                 wandb.log({"train/survival_loss": segregated_loss[0]})
                 wandb.log({"train/annotation_loss": segregated_loss[1]})
+                wandb.log({"lr": optimizer.opt_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
