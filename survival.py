@@ -56,6 +56,9 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
 
+    monai_dict_train = monai_dict_train[:100]
+    monai_dict_dev = monai_dict_dev[:100]
+
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -158,7 +161,6 @@ def main(cfg: Config):
     start_epoch = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
-
         # Init storage variables
         running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
         probs.fill(0)
@@ -191,7 +193,7 @@ def main(cfg: Config):
                 wandb.log({"train/loss_step": loss})
                 wandb.log({"train/survival_loss": segregated_loss[0]})
                 wandb.log({"train/annotation_loss": segregated_loss[1]})
-                wandb.log({"lr": optimizer.opt_state.hyperparams['learning_rate'].value})
+                wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")

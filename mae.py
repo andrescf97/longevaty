@@ -53,7 +53,7 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-    
+
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
@@ -87,7 +87,8 @@ def main(cfg: Config):
         decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
         end_value=cfg.optimizer.end_lr
     )
-    optimizer = nnx.Optimizer(model, tx=optax.adamw(learning_rate=scheduler))
+    tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
+    optimizer = nnx.Optimizer(model=model, tx=tx)
 
     # Position embeddings
     img_size = cfg.data.img_size
@@ -129,8 +130,9 @@ def main(cfg: Config):
                                                     selected_indices, masked_indices)
             running_loss += loss
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
-                wandb.log({"train/loss_step": loss})
                 jax.debug.print("Epoch {epoch}, step {step} / {steps_per_epoch}: loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
+                wandb.log({"train/loss_step": loss})
+                wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/mse": running_loss / steps_per_epoch})
         jax.debug.print("Train. Epoch {epoch} / {epochs}: Loss {loss}", epoch = epoch, epochs=cfg.training.epochs, loss = (running_loss / steps_per_epoch))
