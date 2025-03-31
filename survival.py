@@ -112,7 +112,6 @@ def main(cfg: Config):
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
     mae_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint, cfg.log.mae_ckpt_load), options=options)
     load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
-    last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
     best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
 
     if cfg.log.use_checkpoint:
@@ -156,6 +155,7 @@ def main(cfg: Config):
     dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     start_epoch = 0
+    ckpt_metric = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -223,8 +223,13 @@ def main(cfg: Config):
             dev_censors[step, :] = batch['time_at_event'].numpy()
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-        compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+        survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
         log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
+
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
+            if survival_metrics['dev/c_index'] >= ckpt_metric:
+                best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                ckpt_metric = survival_metrics['dev/c_index']
     return
 
 @jax.jit
