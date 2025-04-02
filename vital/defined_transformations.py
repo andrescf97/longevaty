@@ -98,6 +98,16 @@ def reconstruct_from_patches(patches, image_shape, patch_size):
     
     return reconstructed_images
 
+class CalculatePhysicalSize(transforms.MapTransform):
+    def __init__(self, keys, spacing):
+        self.spacing = spacing
+    
+    def __call__(self, data):
+        img_shape = data['image'].shape
+        physical_shape = (self.spacing[0] * img_shape[0], self.spacing[1] * img_shape[1], self.spacing[2] * img_shape[2]) 
+        data['size'] = physical_shape
+        return data
+
 class Patchify(transforms.MapTransform):
     def __init__(self, keys, patch_size):
         super().__init__(keys)
@@ -173,5 +183,44 @@ class MaskPatchesd(transforms.MapTransform):
         data.pop("device")
         data.pop("institution")
         data.pop("cancer_laterality")
+
+        return data
+
+class MaskPatchesNoPopd(transforms.MapTransform):
+    def __init__(self, keys, patch_size, hull_only=False, use_annotations=True):
+        super().__init__(keys)
+        self.patch_size = patch_size
+        self.hull_only = hull_only
+        self.use_annotations = use_annotations
+
+    def __call__(self, data):
+        image = data["image"]
+
+        patched_image = extract_patches(image,self.patch_size)
+        data["image"] = patched_image.squeeze()
+
+        annotation = data.get('annotation', None)
+        if annotation is not None and self.use_annotations:
+            patched_annotation = extract_patches(annotation, self.patch_size)
+            data["annotation"] = patched_annotation.squeeze()
+            data['has_annotation'] = True
+        else:
+            annotation_mask = data["mask"].clone()
+            laterality = data["cancer_laterality"]
+
+            if self.hull_only:
+                annotation_mask[annotation_mask > 0] = 1 #select only hull
+            elif laterality[1]:
+                annotation_mask[annotation_mask != laterality[1]] = 0
+            elif laterality[0] == 3:
+                annotation_mask[annotation_mask < 4] = 0 #select right lung only
+            elif laterality[0] == 4:
+                annotation_mask[annotation_mask == 1] = 0 #get rid of hull
+                annotation_mask[annotation_mask > 3] = 0 #select left lung only
+
+            annotation_mask[annotation_mask > 0] = 1
+            patched_annotation_mask = extract_patches(annotation_mask, self.patch_size).squeeze()
+            data["annotation"] = patched_annotation_mask
+            data['has_annotation'] = False
 
         return data

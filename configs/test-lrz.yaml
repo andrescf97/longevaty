@@ -1,0 +1,116 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: False
+    project_name: "test-jax"
+    task: "mae"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
+    monai_dict_train: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_train_lrz_miccai.json"
+    monai_dict_dev: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_dev_lrz.json"
+    monai_dict_test: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/cancer_test_lrz.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    dtype: bfloat16
+    mask_ratio: 0.5
+    seed: 0
+    num_workers: 4
+    dev_num_workers: 6
+    test_num_workers: 1
+    prefetch_factor: 8
+    shuffle: True
+    epochs: 50
+    batch_size: 2
+    to_checkpoint: False
+    underrepresented_weight: 14
+
+optimizer:
+    lr_scheduler: onecycle
+    peak_lr: 8e-6
+    init_lr: 8e-6
+    end_lr: 8e-6
+    warmup_epochs: 0
+
+attention:
+    heads: 12
+    use_cls: True
+    use_mean_token: True
+
+loss:
+    sw: 10
+    aw: 1
+
+log:
+    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
+    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    mae_ckpt_load: 'vit-last'
+    mae_use_checkpoint: 'astral-plasma-71'
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit'
+    use_checkpoint: 'celestial-bird-58'
+    checkpoint_at_epoch: 1000
+    log_at_these_steps: 2
+    log_scans_at_these_epochs: 1
+    num_predictions: 20
+    cancer_cases_to_log: 5
+    laterality_cases_to_log: 5
+    healthy_cases_to_log: 5
+
+
+model:
+    patch_size: 16
+    enc_dim: 768
+    dec_dim: 768
+    dropout_rate: 0.1
+    enc_heads: 12
+    enc_depth: 12
+    dec_heads: 6
+    dec_depth: 4
+    in_chans: 1
+    rng: 24
+
+transform:
+    test_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        ToDeviced:
+            keys: ['image']
+            allow_missing_keys: True 
+            device: "cuda"
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        MaskPatchesNoPopd_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+            hull_only: False
+            use_annotations: True
+        ToTensord:
+            keys: ['image']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
