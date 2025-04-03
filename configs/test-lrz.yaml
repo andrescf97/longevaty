@@ -57,8 +57,8 @@ loss:
     aw: 1
 
 log:
-    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
-    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_loc: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/model_checkpoints/jax/survival"
+    ckpt_load_loc: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/model_checkpoints/jax"
     mae_ckpt_load: 'vit-last'
     mae_use_checkpoint: 'astral-plasma-71'
     ckpt_best: 'vit'
