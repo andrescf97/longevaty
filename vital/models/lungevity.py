@@ -77,6 +77,7 @@ class LungeVity(nnx.Module):
             nnx.Linear(hidden, hidden_dim, rngs=rngs, dtype=dtype),
             nnx.gelu,
             nnx.Dropout(rate=dropout_rate, rngs=rngs),
+            nnx.LayerNorm(hidden_dim, epsilon=1e-6, rngs=rngs, dtype=dtype),
             CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
         ])
 

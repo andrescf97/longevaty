@@ -137,7 +137,7 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     grid_d = jnp.arange(d, dtype=dtype)
     
     # Create 3D meshgrid
-    grid_h, grid_w, grid_d = np.meshgrid(grid_h, grid_w, grid_d, indexing='ij')
+    grid_h, grid_w, grid_d = jnp.meshgrid(grid_h, grid_w, grid_d, indexing='ij')
 
     assert embed_dim % 6 == 0, 'Embed dimension must be divisible by 6 for 3D sin-cos position embedding'
 
