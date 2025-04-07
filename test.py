@@ -58,13 +58,12 @@ def main(cfg: Config):
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     del monai_dict_train
 
-
     test_transforms = make_transformations(tf_dict=cfg.transform.test_tf)
     test_ds = Dataset(data=monai_dict_test, transform=test_transforms)
 
     dataset_gnr = Generator(device="cpu")
     dataset_gnr.manual_seed(0)
-    test_loader = DataLoader(test_ds, batch_size=cfg.training.batch_size, shuffle=True,
+    test_loader = DataLoader(test_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dataset_gnr)
@@ -161,6 +160,49 @@ def main(cfg: Config):
     print("Risk Metrics")
     print(risk_metrics)
     print("="*80)
+
+    res = []
+    for i in range(len(_probs)):
+        res.append({
+            "cancer_risk": _probs[i][0].tolist(),
+            "gold": golds[i][0].tolist(),
+            "censors": censors[i][0].tolist(),
+            "pid": monai_dict_test[2*i]['pid'],
+            "study": monai_dict_test[2*i]['study'],
+            "series": monai_dict_test[2*i]['series'],
+            "exam": monai_dict_test[2*i]['exam'],
+            "accession": monai_dict_test[2*i]['accession'],
+            "screen_timepoint": monai_dict_test[2*i]['screen_timepoint'],
+            "device": monai_dict_test[2*i]['device'],
+            "institution": monai_dict_test[2*i]['institution'],
+            "cancer_laterality": monai_dict_test[2*i]['cancer_laterality'],
+            "y": monai_dict_test[2*i]['y'],
+            "time_at_event": monai_dict_test[2*i]['time_at_event'],
+            "y_seq": monai_dict_test[2*i]['y_seq'],
+            "y_mask": monai_dict_test[2*i]['y_mask']
+        })
+
+        res.append({
+            "cancer_risk": _probs[i][1].tolist(),
+            "gold": golds[i][1].tolist(),
+            "censors": censors[i][1].tolist(),
+            "pid": monai_dict_test[2*i + 1]['pid'],
+            "study": monai_dict_test[2*i + 1]['study'],
+            "series": monai_dict_test[2*i + 1]['series'],
+            "exam": monai_dict_test[2*i + 1]['exam'],
+            "accession": monai_dict_test[2*i + 1]['accession'],
+            "screen_timepoint": monai_dict_test[2*i + 1]['screen_timepoint'],
+            "device": monai_dict_test[2*i + 1]['device'],
+            "institution": monai_dict_test[2*i + 1]['institution'],
+            "cancer_laterality": monai_dict_test[2*i + 1]['cancer_laterality'],
+            "y": monai_dict_test[2*i + 1]['y'],
+            "time_at_event": monai_dict_test[2*i + 1]['time_at_event'],
+            "y_seq": monai_dict_test[2*i + 1]['y_seq'],
+            "y_mask": monai_dict_test[2*i + 1]['y_mask']
+        })
+
+    with open(f"{cfg.log.ckpt_loc}/predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
+        json.dump(res, fp, indent=4)
     return
 
 @jax.jit
