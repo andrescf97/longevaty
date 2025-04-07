@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: False
+    dry_run: True
     project_name: "test-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -50,7 +50,7 @@ optimizer:
 attention:
     heads: 12
     use_cls: True
-    use_mean_token: True
+    use_mean_token: False
 
 loss:
     sw: 10
@@ -64,7 +64,7 @@ log:
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit'
-    use_checkpoint: 'celestial-bird-58'
+    use_checkpoint: 'klingon-first-contact-82'
     checkpoint_at_epoch: 1000
     log_at_these_steps: 2
     log_scans_at_these_epochs: 1
@@ -85,6 +85,7 @@ model:
     dec_depth: 4
     in_chans: 1
     rng: 24
+    fusion_layer: False
 
 transform:
     test_tf:

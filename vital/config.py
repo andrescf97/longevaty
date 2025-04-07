@@ -126,6 +126,7 @@ class ModelConfig:
     dec_depth: int = MISSING
     in_chans: int = 1
     rng: int = 24
+    fusion_layer: bool = False
 
 
 @dataclass

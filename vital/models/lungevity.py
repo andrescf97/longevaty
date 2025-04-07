@@ -30,6 +30,53 @@ class CumProbLayer(nnx.Module):
 
         return masked_hazards.sum(axis=1) + base_hazard
 
+class ResidualBlock(nnx.Module):
+    def __init__(
+            self,
+            dim: int = 1024,
+            hidden_dim: int = 768,
+            dropout_rate: float = 0.2,
+            dtype: type = jnp.bfloat16,
+            *,
+            rngs: nnx.Rngs = nnx.Rngs(0),
+    ):
+        self.fc1 = nnx.Linear(dim, hidden_dim, dtype=dtype, rngs=rngs)
+        self.dropout = nnx.Dropout(rate = dropout_rate, rngs=rngs)
+        self.fc2 = nnx.Linear(hidden_dim, dim, dtype=dtype, rngs=rngs)
+
+    def __call__( self, x):
+        identity = x
+        out = nnx.gelu(self.fc1(x))
+        out = self.dropout(out)
+        out = self.fc2(out)
+        return out + identity
+
+
+class FusionLayerWithResidual(nnx.Module):
+    def __init__(
+            self,
+            input_dim: int = 2304,
+            hidden_dim: int = 1024,
+            output_dim: int = 768,
+            dropout_rate: float = 0.1,
+            num_residual_blocks: int = 2,
+            dtype: type = jnp.bfloat16,
+            *,
+            rngs: nnx.Rngs = nnx.Rngs(0)
+    ):
+        self.fc_in = nnx.Linear(input_dim, input_dim, dtype=dtype, rngs=rngs)
+        self.res_blocks = nnx.Sequential(*[
+            ResidualBlock(input_dim, hidden_dim, dropout_rate, dtype=dtype,rngs=rngs)
+            for _ in range(num_residual_blocks)
+        ])
+        self.fc_out = nnx.Linear(input_dim, output_dim, dtype=dtype, rngs=rngs)
+
+    def __call__(self, x):
+        x = self.fc_in(x)
+        x = self.res_blocks(x)
+        x = nnx.gelu(self.fc_out(x))
+        return x
+
 class LungeVity(nnx.Module):
     def __init__(
         self, 
@@ -43,6 +90,7 @@ class LungeVity(nnx.Module):
         use_cls: bool = False,
         use_mean_token: bool = False,
         guided_attention_heads: int = 8,
+        fusion_layer: bool = False,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ) -> nnx.Module:
@@ -73,12 +121,18 @@ class LungeVity(nnx.Module):
         self.mha = MultiHeadAttention(num_heads=guided_attention_heads, in_features=hidden_dim, dtype=dtype, rngs=rngs,
                                       dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=True)
 
-        self.classifier = nnx.Sequential(*[
-            nnx.Linear(hidden, hidden_dim, rngs=rngs, dtype=dtype),
-            nnx.gelu,
-            nnx.Dropout(rate=dropout_rate, rngs=rngs),
-            CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
-        ])
+        if fusion_layer:
+            self.classifier = nnx.Sequential(*[
+                FusionLayerWithResidual(input_dim=hidden, output_dim=hidden_dim, hidden_dim=1024, dropout_rate=dropout_rate, dtype=dtype, rngs=rngs),
+                CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
+            ])
+        else:
+            self.classifier = nnx.Sequential(*[
+                nnx.Linear(hidden, hidden_dim, rngs=rngs, dtype=dtype),
+                nnx.gelu,
+                nnx.Dropout(rate=dropout_rate, rngs=rngs),
+                CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
+            ])
 
     def attention_pooling(
             self,

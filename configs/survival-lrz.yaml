@@ -81,6 +81,7 @@ model:
     dec_depth: 4
     in_chans: 1
     rng: 24
+    fusion_layer: True
 
 transform:
     train_tf:

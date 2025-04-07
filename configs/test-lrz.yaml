@@ -85,6 +85,7 @@ model:
     dec_depth: 4
     in_chans: 1
     rng: 24
+    fusion_layer: False
 
 transform:
     test_tf:
