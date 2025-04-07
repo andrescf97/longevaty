@@ -162,9 +162,9 @@ def main(cfg: Config):
     print("="*80)
 
     res = []
-    for i in range(len(_probs)):
+    for i in range(len(probs)):
         res.append({
-            "cancer_risk": _probs[i][0].tolist(),
+            "cancer_risk": probs[i][0].tolist(),
             "gold": golds[i][0].tolist(),
             "censors": censors[i][0].tolist(),
             "pid": monai_dict_test[2*i]['pid'],
@@ -183,7 +183,7 @@ def main(cfg: Config):
         })
 
         res.append({
-            "cancer_risk": _probs[i][1].tolist(),
+            "cancer_risk": probs[i][1].tolist(),
             "gold": golds[i][1].tolist(),
             "censors": censors[i][1].tolist(),
             "pid": monai_dict_test[2*i + 1]['pid'],
