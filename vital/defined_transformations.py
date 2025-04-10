@@ -234,17 +234,13 @@ class NoNodulesNoPopd(transforms.MapTransform):
 
     def __call__(self, data):
         image = data["image"]
-
-        patched_image = extract_patches(image,self.patch_size)
-        data["image"] = patched_image.squeeze()
-
         annotation = data.get('annotation', None)
         if annotation is not None and self.use_annotations:
+            annotation_mask = (annotation > 0)
+            image[annotation_mask] = -1
+
             patched_annotation = extract_patches(annotation, self.patch_size)
             data["annotation"] = patched_annotation.squeeze()
-            annotations_mask = (patched_annotation > 0).any(axis=2)
-            patched_image[annotations_mask] = -1
-            data['image'] = patched_image.squeeze()
             data['has_annotation'] = True
         else:
             annotation_mask = data["mask"].clone()
@@ -265,4 +261,7 @@ class NoNodulesNoPopd(transforms.MapTransform):
             data["annotation"] = patched_annotation_mask
             data['has_annotation'] = False
 
+
+        patched_image = extract_patches(image,self.patch_size)
+        data["image"] = patched_image.squeeze()
         return data
