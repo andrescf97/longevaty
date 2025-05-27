@@ -265,3 +265,29 @@ class NoNodulesNoPopd(transforms.MapTransform):
         patched_image = extract_patches(image,self.patch_size)
         data["image"] = patched_image.squeeze()
         return data
+
+class Patchify(transforms.MapTransform):
+    def __init__(self, keys, patch_size, spatial_size):
+        super().__init__(keys)
+        self.patch_size = patch_size
+        self.size = (1, spatial_size[0], spatial_size[1], spatial_size[2])
+
+    def __call__(self, data):
+        image = data.get("image0")
+        patched_image = extract_patches(image,self.patch_size)
+        data["image0"] = patched_image.squeeze()
+
+        image = data.get("image1")
+        patched_image = extract_patches(image,self.patch_size)
+        data["image1"] = patched_image.squeeze()
+
+        image = data.get("image2")
+        patched_image = extract_patches(image,self.patch_size)
+        data["image2"] = patched_image.squeeze()
+
+        data.pop("mask0")
+        data.pop("mask1")
+        data.pop("mask2")
+
+        data.pop("institution")
+        return data

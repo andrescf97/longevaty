@@ -1,0 +1,184 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: True
+    project_name: "survival-jax"
+    task: "mae"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/nlst_data/npy"
+    monai_dict_train: "/nlst_data/train_longi.json"
+    monai_dict_dev: "/nlst_data/train_longi.json"
+    monai_dict_test: "/nlst_data/train_longi.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    dtype: bfloat16
+    mask_ratio: 0.5
+    seed: 0
+    num_workers: 8
+    dev_num_workers: 6
+    test_num_workers: 1
+    prefetch_factor: 8
+    shuffle: True
+    epochs: 50
+    batch_size: 4
+    to_checkpoint: False
+    underrepresented_weight: 14
+
+optimizer:
+    lr_scheduler: onecycle
+    peak_lr: 8e-6
+    init_lr: 8e-6
+    end_lr: 8e-6
+    warmup_epochs: 0
+
+attention:
+    heads: 4
+    use_cls: False
+    use_mean_token: True
+
+loss:
+    sw: 10
+    aw: 1
+
+log:
+    ckpt_loc: "/nlst_data/checkpoints/longivity/"
+    ckpt_load_loc: "/nlst_data/checkpoints/mae/"
+    mae_ckpt_load: 'vit-last'
+    mae_use_checkpoint: 'astral-plasma-71'
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit-last'
+    use_checkpoint: 'test'
+    checkpoint_at_epoch: 1000
+    log_at_these_steps: 100
+    log_scans_at_these_epochs: 5
+    num_predictions: 20
+
+model:
+    patch_size: 16
+    enc_dim: 768
+    dec_dim: 768
+    dropout_rate: 0.1
+    enc_heads: 12
+    enc_depth: 12
+    dec_heads: 6
+    dec_depth: 4
+    in_chans: 1
+    rng: 24
+    fusion_layer: True
+
+transform:
+    train_tf:
+        LoadImaged:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image0', 'image1', 'image2']
+            mode: ["trilinear", "trilinear", "trilinear"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        RandFlipd_1:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 0
+        RandFlipd_2:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 1
+        RandFlipd_3:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 2
+        RandRotated:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+            prob: 0.5
+            range_x: 0.2
+            range_y: 0.2
+            range_z: 0.2
+            mode: ['bilinear', 'bilinear', 'bilinear']
+        RandHistogramShiftd:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+            prob: 0.33
+            num_control_points: [5,8]
+        RandGaussianSharpend:
+            keys: ['image0', 'image1', 'image2']
+            sigma1_x: [0.1,0.5]
+            sigma1_y: [0.1,0.5]
+            sigma1_z: [0.1,0.5]
+            sigma2_x: 0.3
+            sigma2_y: 0.3
+            sigma2_z: 0.3
+            prob: 0.33
+            alpha: [1.5, 10]
+        RandGaussianNoised:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            mean: 0
+            std: 0.1
+        Patchify_our:
+            keys: ['image0']
+            patch_size: [16, 16, 16]
+            spatial_size: [160, 240, 128]
+        ToTensord_1:
+            keys: ['image0', 'image1', 'image2',  'y_seq']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask', 't_mask']
+            track_meta: False
+            device: "cuda"
+            dtype: bool
+
+    dev_tf:
+        LoadImaged:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image0', 'image1', 'image2']
+            mode: ["trilinear", "trilinear", "trilinear"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        Patchify_our:
+            keys: ['image0']
+            patch_size: [16, 16, 16]
+            spatial_size: [160, 240, 128]
+        ToTensord_1:
+            keys: ['image0', 'image1', 'image2', 'y_mask', 'y_seq', 't_mask']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask', 't_mask']
+            track_meta: False
+            device: "cuda"
+            dtype: bool
