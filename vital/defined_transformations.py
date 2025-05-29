@@ -266,7 +266,7 @@ class NoNodulesNoPopd(transforms.MapTransform):
         data["image"] = patched_image.squeeze()
         return data
 
-class Patchify(transforms.MapTransform):
+class PatchifyLongi(transforms.MapTransform):
     def __init__(self, keys, patch_size, spatial_size):
         super().__init__(keys)
         self.patch_size = patch_size

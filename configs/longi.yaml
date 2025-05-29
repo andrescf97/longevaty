@@ -4,8 +4,8 @@ defaults:
 
 wandb:
     dry_run: True
-    project_name: "survival-jax"
-    task: "mae"
+    project_name: "longi-jax"
+    task: "survival"
     entity: "mri-ai-lab"
 
 data:
@@ -20,8 +20,8 @@ data:
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
     data_root: "/nlst_data/npy"
     monai_dict_train: "/nlst_data/train_longi.json"
-    monai_dict_dev: "/nlst_data/train_longi.json"
-    monai_dict_test: "/nlst_data/train_longi.json"
+    monai_dict_dev: "/nlst_data/dev_longi.json"
+    monai_dict_test: "/nlst_data/test_longi.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -30,10 +30,10 @@ training:
     dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
-    num_workers: 8
+    num_workers: 10
     dev_num_workers: 6
     test_num_workers: 1
-    prefetch_factor: 8
+    prefetch_factor: 5
     shuffle: True
     epochs: 50
     batch_size: 4
@@ -66,7 +66,7 @@ log:
     ckpt_load: 'vit-last'
     use_checkpoint: 'test'
     checkpoint_at_epoch: 1000
-    log_at_these_steps: 100
+    log_at_these_steps: 1000
     log_scans_at_these_epochs: 5
     num_predictions: 20
 
@@ -91,6 +91,10 @@ transform:
         EnsureChannelFirstd:
             keys: ['image0', 'image1', 'image2']
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True 
+            device: "cuda"
         Resized:
             keys: ['image0', 'image1', 'image2']
             mode: ["trilinear", "trilinear", "trilinear"]
@@ -139,7 +143,7 @@ transform:
             prob: 0.33
             mean: 0
             std: 0.1
-        Patchify_our:
+        PatchifyLongi_our:
             keys: ['image0']
             patch_size: [16, 16, 16]
             spatial_size: [160, 240, 128]
@@ -162,17 +166,21 @@ transform:
         EnsureChannelFirstd:
             keys: ['image0', 'image1', 'image2']
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True 
+            device: "cuda"
         Resized:
             keys: ['image0', 'image1', 'image2']
             mode: ["trilinear", "trilinear", "trilinear"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
-        Patchify_our:
+        PatchifyLongi_our:
             keys: ['image0']
             patch_size: [16, 16, 16]
             spatial_size: [160, 240, 128]
         ToTensord_1:
-            keys: ['image0', 'image1', 'image2', 'y_mask', 'y_seq', 't_mask']
+            keys: ['image0', 'image1', 'image2',  'y_seq']
             allow_missing_keys: True
             track_meta: False
             device: "cuda"

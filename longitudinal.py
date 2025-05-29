@@ -2,7 +2,7 @@
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
 os.environ['XLA_FLAGS'] = (
-    '--xla_gpu_triton_gemm_any=True '
+    # '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -38,6 +38,10 @@ import optax
 import orbax.checkpoint as ocp
 from dlpack import asdlpack
 
+import resource
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
+
 load_config_store()
 @hydra.main(config_path="./configs", config_name='longi.yaml', version_base=None)
 def main(cfg: Config):
@@ -56,6 +60,8 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+
+    train_censoring_distribution = get_censoring_dist(monai_dict_train)
 
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
@@ -82,7 +88,7 @@ def main(cfg: Config):
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                               persistent_workers=True, pin_memory=False, drop_last=True)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
-                        num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
+                        num_workers=cfg.training.dev_num_workers, prefetch_factor=2,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
     
@@ -107,6 +113,13 @@ def main(cfg: Config):
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
     mae_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint, cfg.log.mae_ckpt_load), options=options)
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
+    best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
+
+    start_epoch = 0
+    if cfg.log.use_checkpoint:
+        start_epoch, prev_state = load_checkpoint(load_mngr)
+        state = prev_state if prev_state is not None else state
 
     mae_model = nnx.eval_shape(
         lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
@@ -143,7 +156,6 @@ def main(cfg: Config):
     dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     ckpt_metric = 0
-    start_epoch = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -184,6 +196,7 @@ def main(cfg: Config):
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
+        compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
         # Dev
@@ -218,9 +231,13 @@ def main(cfg: Config):
             dev_censors[step, :] = batch['time_at_event'].numpy()
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-        # Metrics
+        survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
         log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
 
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
+            if survival_metrics['dev/c_index'] >= ckpt_metric:
+                best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                ckpt_metric = survival_metrics['dev/c_index']
     return
 
 @jax.jit
@@ -257,7 +274,7 @@ def dev_step(
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
     model.eval()
-    (loss, probs) = loss(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
+    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
     return loss, probs
 
 
