@@ -32,11 +32,14 @@ class Longivity(nnx.Module):
         )
 
         self.dropout = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        
+        self.extract_tuple = 0
         match rnn_cell:
             case "lstm":
                 cell = nnx.nn.recurrent.LSTMCell(enc_hidden_dim, rnn_hidden_dim,
                                                     dtype=dtype,
                                                     rngs=rngs)
+                self.extract_tuple = 1
             case "gru":
                 cell = nnx.nn.recurrent.GRUCell(enc_hidden_dim, rnn_hidden_dim,
                                                     dtype=dtype,
@@ -64,6 +67,8 @@ class Longivity(nnx.Module):
 
         batch = jnp.stack((emb0, emb1, emb2), axis=1)
         h, _ = self.rnn(batch, t_mask)
+        if self.xtract_tuple:
+            h = h[1]
         op = self.classifier(h)
         return op
 
