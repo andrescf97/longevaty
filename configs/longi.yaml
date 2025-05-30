@@ -73,6 +73,8 @@ log:
 
 model:
     patch_size: 16
+    rnn_hidden_dim: 768
+    mlp_hidden_dim: 768
     enc_dim: 768
     dec_dim: 768
     dropout_rate: 0.1

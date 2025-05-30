@@ -128,6 +128,8 @@ class ModelConfig:
     in_chans: int = 1
     rng: int = 24
     fusion_layer: bool = False
+    rnn_hidden_dim: int = 768
+    mlp_hidden_dim: int = 768
 
 
 @dataclass

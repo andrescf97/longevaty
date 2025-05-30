@@ -95,7 +95,7 @@ def main(cfg: Config):
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
-                      rnn_hidden_dim=512, hidden_dim=384, max_followup=cfg.data.max_followup,
+                      rnn_hidden_dim=cfg.model.rnn_hidden_dim, hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
@@ -173,7 +173,7 @@ def main(cfg: Config):
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
-        running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
+        running_loss = 0
         probs.fill(0)
         golds.fill(0)
         censors.fill(0)
@@ -217,7 +217,7 @@ def main(cfg: Config):
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
         # Dev
-        running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
+        running_loss = 0
         dev_probs.fill(0)
         dev_golds.fill(0)
         dev_censors.fill(0)
