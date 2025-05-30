@@ -207,7 +207,7 @@ def main(cfg: Config):
                 jax.debug.print("Epoch {epoch}. Step {step}/{steps_per_epoch}: Loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
                 wandb.log({"train/loss_step": loss})
                 if cfg.training.freeze_encoder:
-                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate']})
+                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
                 else:
                     wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
 
