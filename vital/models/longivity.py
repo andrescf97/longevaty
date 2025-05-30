@@ -67,7 +67,7 @@ class Longivity(nnx.Module):
 
         batch = jnp.stack((emb0, emb1, emb2), axis=1)
         h, _ = self.rnn(batch, t_mask)
-        if self.xtract_tuple:
+        if self.extract_tuple:
             h = h[1]
         op = self.classifier(h)
         return op
