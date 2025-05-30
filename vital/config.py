@@ -130,6 +130,7 @@ class ModelConfig:
     fusion_layer: bool = False
     rnn_hidden_dim: int = 768
     mlp_hidden_dim: int = 768
+    rnn_cell: str = "simple"
 
 
 @dataclass

@@ -97,6 +97,7 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       rnn_hidden_dim=cfg.model.rnn_hidden_dim, hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
+                      rnn_cell=cfg.model.rnn_cell,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Optimizer                 

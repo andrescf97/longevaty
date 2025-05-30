@@ -7,6 +7,7 @@ from vital.models.lungevity import CumProbLayer
 class Longivity(nnx.Module):
     def __init__(
         self,
+        rnn_cell: str = "simple",
         patch_size: int = 16,
         enc_hidden_dim: int = 768,
         rnn_hidden_dim: int = 384,
@@ -31,9 +32,23 @@ class Longivity(nnx.Module):
         )
 
         self.dropout = nnx.Dropout(rate=dropout_rate, rngs=rngs)
-        cell = nnx.nn.recurrent.SimpleCell(enc_hidden_dim, rnn_hidden_dim,
-                                                dtype=dtype,
-                                                rngs=rngs)
+        match rnn_cell:
+            case "lstm":
+                cell = nnx.nn.recurrent.LSTMCell(enc_hidden_dim, rnn_hidden_dim,
+                                                    dtype=dtype,
+                                                    rngs=rngs)
+            case "gru":
+                cell = nnx.nn.recurrent.GRUCell(enc_hidden_dim, rnn_hidden_dim,
+                                                    dtype=dtype,
+                                                    rngs=rngs)
+            case "simple":
+                cell = nnx.nn.recurrent.SimpleCell(enc_hidden_dim, rnn_hidden_dim,
+                                                    dtype=dtype,
+                                                    rngs=rngs)
+            case _:
+                cell = nnx.nn.recurrent.SimpleCell(enc_hidden_dim, rnn_hidden_dim,
+                                                    dtype=dtype,
+                                                    rngs=rngs)
         self.rnn = RNN(cell, return_carry=True)
         self.classifier = nnx.Sequential(*[
             nnx.Linear(rnn_hidden_dim, hidden_dim, rngs=rngs, dtype=dtype),

@@ -72,6 +72,7 @@ log:
     num_predictions: 20
 
 model:
+    rnn_cell: "simple"
     patch_size: 16
     rnn_hidden_dim: 768
     mlp_hidden_dim: 768
