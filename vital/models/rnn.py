@@ -140,9 +140,18 @@ class RNN(Module):
     def scan_fn(
       cell: RNNCellBase, carry: Carry, x: Array, mask: Array
     ) -> tuple[Carry, Array] | tuple[Carry, tuple[Carry, Array]]:
-      new_carry, y = cell(carry, x)
-      not_mask = ~mask
-      carry = carry * mask[:, None] + not_mask[:, None] * new_carry
+      mask_broadcast = jnp.expand_dims(mask, axis=-1)
+
+      # Step 1
+      x_masked = mask_broadcast * x
+      new_carry, y = cell(carry, x_masked)
+      not_mask = ~mask_broadcast
+
+      # Step 2
+      carry = carry * mask_broadcast + not_mask * new_carry
+
+      # Step 3
+      y = mask_broadcast * y
       if slice_carry:
         return carry, (carry, y)
       return carry, y
