@@ -59,7 +59,7 @@ class RNN(Module):
   def __call__(
     self,
     inputs: Array,
-    masks: Array,
+    masks: Array, # Mask is inclusion criteria, not exclusion
     *,
     initial_carry: Carry | None = None,
     seq_lengths: Array | None = None,
@@ -148,7 +148,9 @@ class RNN(Module):
       not_mask = ~mask_broadcast
 
       # Step 2
-      carry = carry * mask_broadcast + not_mask * new_carry
+      carry = jax.tree.map(lambda old, new: old * not_mask + new * mask_broadcast,
+                           carry,
+                           new_carry)
 
       # Step 3
       y = mask_broadcast * y
