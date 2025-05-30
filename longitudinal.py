@@ -5,7 +5,6 @@ os.environ['XLA_FLAGS'] = (
     # '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import hydra
 from omegaconf import OmegaConf
@@ -29,6 +28,7 @@ from torch import Generator
 from torch.utils.data import WeightedRandomSampler
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
+import flax
 from flax import nnx
 import jax
 import jax.numpy as jnp
@@ -98,14 +98,27 @@ def main(cfg: Config):
                       rnn_hidden_dim=512, hidden_dim=384, max_followup=cfg.data.max_followup,
                       blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
                       dtype=dtype, rngs=nnx.Rngs(0))
-    # scheduler = optax.schedules.warmup_cosine_decay_schedule(
-    #     init_value=cfg.optimizer.init_lr,
-    #     peak_value=cfg.optimizer.peak_lr,
-    #     warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
-    #     decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
-    #     end_value=cfg.optimizer.end_lr
-    # )
-    tx = optax.inject_hyperparams(optax.adam)(learning_rate=cfg.optimizer.peak_lr)
+
+    # Optimizer                 
+    scheduler = optax.schedules.warmup_cosine_decay_schedule(
+        init_value=cfg.optimizer.init_lr,
+        peak_value=cfg.optimizer.peak_lr,
+        warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        end_value=cfg.optimizer.end_lr
+    )
+    tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
+    if cfg.training.freeze_encoder:
+        partition_optimizer = {
+            "trainable": tx,
+            "frozen": optax.set_to_zero()
+        }
+        abs_state = nnx.eval_shape(lambda: nnx.state(model, nnx.Param))
+        param_partitions = flax.traverse_util.path_aware_map(
+                            lambda path, v: 'frozen' if 'encoder' in path else 'trainable', 
+                            abs_state.raw_mapping)
+        nnx.replace_by_pure_dict(abs_state, param_partitions)
+        tx = optax.multi_transform(partition_optimizer, abs_state)
     optimizer = nnx.Optimizer(model=model, tx=tx)
 
     # Load checkpoint
@@ -121,20 +134,21 @@ def main(cfg: Config):
         start_epoch, prev_state = load_checkpoint(load_mngr)
         state = prev_state if prev_state is not None else state
 
-    mae_model = nnx.eval_shape(
-        lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
-                        dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads,
-                        drouput_rate=cfg.model.dropout_rate, dtype=dtype,
-                        rngs=nnx.Rngs(cfg.model.rng))
-    )
-    _, mae_state = nnx.split(mae_model)
-    s = mae_mngr.restore(mae_mngr.latest_step())
-    nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))
-    state[0].encoder = mae_state.encoder
+    if prev_state is None:
+        mae_model = nnx.eval_shape(
+            lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
+                            dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads,
+                            drouput_rate=cfg.model.dropout_rate, dtype=dtype,
+                            rngs=nnx.Rngs(cfg.model.rng))
+        )
+        _, mae_state = nnx.split(mae_model)
+        s = mae_mngr.restore(mae_mngr.latest_step())
+        nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))
+        state[0].encoder = mae_state.encoder
 
-    del s
-    del mae_state
-    del mae_mngr
+        del s
+        del mae_state
+        del mae_mngr
 
     img_size = cfg.data.img_size
     grid_size = [
@@ -192,7 +206,10 @@ def main(cfg: Config):
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
                 jax.debug.print("Epoch {epoch}. Step {step}/{steps_per_epoch}: Loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
                 wandb.log({"train/loss_step": loss})
-                wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
+                if cfg.training.freeze_encoder:
+                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate']})
+                else:
+                    wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics

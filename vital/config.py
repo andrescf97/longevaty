@@ -52,6 +52,7 @@ class TrainingConfig:
     batch_size: int = MISSING
     to_checkpoint: bool = MISSING
     underrepresented_weight: float = 14
+    freeze_encoder: bool = False
 
 @dataclass
 class OptimizerConfig:

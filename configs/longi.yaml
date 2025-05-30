@@ -39,6 +39,7 @@ training:
     batch_size: 4
     to_checkpoint: False
     underrepresented_weight: 14
+    freeze_encoder: True
 
 optimizer:
     lr_scheduler: onecycle
