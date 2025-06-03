@@ -194,3 +194,31 @@ transform:
             track_meta: False
             device: "cuda"
             dtype: bool
+
+    test_tf:
+        LoadImaged:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image0', 'image1', 'image2']
+            mode: ["trilinear", "trilinear", "trilinear"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        PatchifyLongi_our:
+            keys: ['image0']
+            patch_size: [16, 16, 16]
+            spatial_size: [160, 240, 128]
+        ToTensord_1:
+            keys: ['image0', 'image1', 'image2',  'y_seq']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask', 't_mask']
+            track_meta: False
+            device: "cuda"
+            dtype: bool
