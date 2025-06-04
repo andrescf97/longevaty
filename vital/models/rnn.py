@@ -2,6 +2,8 @@
 
 from typing import Any, TypeVar
 from collections.abc import Mapping
+from typing import Callable
+import logging
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +22,8 @@ Array = jax.Array
 Output = Any
 Carry = Any
 
-from flax.nnx.nn.recurrent import RNNCellBase, flip_sequences, _select_last_carry
+from flax.nnx.nn.recurrent import RNNCellBase, flip_sequences, _select_last_carry, RNNBase
+from flax.nnx.nn.recurrent import _concatenate
 
 class RNN(Module):
   """The ``RNN`` module takes any :class:`RNNCellBase` instance and applies it over a sequence
@@ -35,6 +38,7 @@ class RNN(Module):
   def __init__(
     self,
     cell: RNNCellBase,
+    dropout_rate: float = 0.2,
     time_major: bool = False,
     return_carry: bool = False,
     reverse: bool = False,
@@ -55,6 +59,9 @@ class RNN(Module):
     self.rngs = rngs
     self.state_axes = state_axes or {...: iteration.Carry}  # type: ignore
     self.broadcast_rngs = broadcast_rngs
+    self.recurrent_dropout = nnx.Dropout(
+      rate=dropout_rate, rng_collection='recurrent_dropout', rngs=rngs
+    )
 
   def __call__(
     self,
@@ -187,3 +194,121 @@ class RNN(Module):
       return carry, outputs
     else:
       return outputs
+
+class Bidirectional(Module):
+    """Processes the input in both directions and merges the results.
+
+    Example usage::
+
+      >>> from flax import nnx
+      >>> import jax
+      >>> import jax.numpy as jnp
+
+      >>> # Define forward and backward RNNs
+      >>> forward_rnn = RNN(GRUCell(in_features=3, hidden_features=4, rngs=nnx.Rngs(0)))
+      >>> backward_rnn = RNN(GRUCell(in_features=3, hidden_features=4, rngs=nnx.Rngs(0)))
+
+      >>> # Create Bidirectional layer
+      >>> layer = Bidirectional(forward_rnn=forward_rnn, backward_rnn=backward_rnn)
+
+      >>> # Input data
+      >>> x = jnp.ones((2, 3, 3))
+
+      >>> # Apply the layer
+      >>> out = layer(x)
+      >>> print(out.shape)
+      (2, 3, 8)
+
+    """
+
+    forward_rnn: RNNBase
+    backward_rnn: RNNBase
+    merge_fn: Callable[[Array, Array], Array] = _concatenate
+    time_major: bool = False
+    return_carry: bool = False
+
+    def __init__(
+        self,
+        forward_rnn: RNNBase,
+        backward_rnn: RNNBase,
+        *,
+        merge_fn: Callable[[Array, Array], Array] = _concatenate,
+        time_major: bool = False,
+        return_carry: bool = False,
+        rngs: rnglib.Rngs | None = None,
+    ):
+        self.forward_rnn = forward_rnn
+        self.backward_rnn = backward_rnn
+        self.merge_fn = merge_fn
+        self.time_major = time_major
+        self.return_carry = return_carry
+        if rngs is None:
+            rngs = rnglib.Rngs(0)
+        self.rngs = rngs
+
+    def __call__(
+        self,
+        inputs: Array,
+        masks: Array,
+        *,
+        initial_carry: tuple[Carry, Carry] | None = None,
+        rngs: rnglib.Rngs | None = None,
+        seq_lengths: Array | None = None,
+        return_carry: bool | None = None,
+        time_major: bool | None = None,
+        reverse: bool | None = None,  # unused
+        keep_order: bool | None = None,  # unused
+    ) -> Output | tuple[tuple[Carry, Carry], Output]:
+        if time_major is None:
+            time_major = self.time_major
+        if return_carry is None:
+            return_carry = self.return_carry
+        if rngs is None:
+            rngs = self.rngs
+        if initial_carry is not None:
+            initial_carry_forward, initial_carry_backward = initial_carry
+        else:
+            initial_carry_forward = None
+            initial_carry_backward = None
+        # Throw a warning in case the user accidentally re-uses the forward RNN
+        # for the backward pass and does not intend for them to share parameters.
+        if self.forward_rnn is self.backward_rnn:
+            logging.warning(
+                "forward_rnn and backward_rnn is the same object, so "
+                "they will share parameters."
+            )
+
+        # Encode in the forward direction.
+        carry_forward, outputs_forward = self.forward_rnn(
+            inputs,
+            masks,
+            initial_carry=initial_carry_forward,
+            rngs=rngs,
+            seq_lengths=seq_lengths,
+            return_carry=True,
+            time_major=time_major,
+            reverse=False,
+        )
+
+        # Encode in the backward direction.
+        carry_backward, outputs_backward = self.backward_rnn(
+            inputs,
+            masks,
+            initial_carry=initial_carry_backward,
+            rngs=rngs,
+            seq_lengths=seq_lengths,
+            return_carry=True,
+            time_major=time_major,
+            reverse=True,
+            keep_order=True,
+        )
+
+        carry = (carry_forward, carry_backward) if return_carry else None
+        outputs = jax.tree_util.tree_map(
+            self.merge_fn, outputs_forward, outputs_backward
+        )
+
+        if return_carry:
+            return carry, outputs
+        else:
+            return outputs

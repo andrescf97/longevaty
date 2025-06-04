@@ -2,7 +2,7 @@
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
 os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
 
@@ -61,6 +61,9 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
 
+    monai_dict_train = monai_dict_train[:100]
+    monai_dict_dev = monai_dict_dev[:100]
+
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
 
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -88,16 +91,18 @@ def main(cfg: Config):
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                               persistent_workers=True, pin_memory=False, drop_last=True)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
-                        num_workers=cfg.training.dev_num_workers, prefetch_factor=2,
+                        num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.dev_prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
     
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
-                      rnn_hidden_dim=cfg.model.rnn_hidden_dim, hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
-                      blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      rnn_cell=cfg.model.rnn_cell,
+                      hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
+                      enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional,
+                      longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
+                      rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Optimizer                 

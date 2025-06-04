@@ -47,6 +47,7 @@ class TrainingConfig:
     dev_num_workers: int = 4
     test_num_workers: int = 1
     prefetch_factor: int = 2
+    dev_prefetch_factor: int = 2
     shuffle: bool = True
     epochs: int = MISSING
     batch_size: int = MISSING
@@ -128,10 +129,16 @@ class ModelConfig:
     in_chans: int = 1
     rng: int = 24
     fusion_layer: bool = False
-    rnn_hidden_dim: int = 768
     mlp_hidden_dim: int = 768
-    rnn_cell: str = "simple"
 
+@dataclass
+class LongitudinalConfig:
+    rnn_hidden_dim: int = 768
+    rnn_cell: str = "simple"
+    blocks: int = 5
+    bidirectional: bool = True
+    dropout_rate: float = 0.2
+    model: str = "rnn"
 
 @dataclass
 class WandBConfig:
@@ -152,6 +159,7 @@ class Config:
     wandb: WandBConfig = field(default_factory=WandBConfig)
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    longitudinal: LongitudinalConfig = field(default_factory=LongitudinalConfig)
     attention: AttentionConfig = field(default=AttentionConfig)
     training: TrainingConfig = field(default=TrainingConfig)
     optimizer: OptimizerConfig = field(default=OptimizerConfig)

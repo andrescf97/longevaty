@@ -33,10 +33,11 @@ training:
     num_workers: 10
     dev_num_workers: 6
     test_num_workers: 1
-    prefetch_factor: 5
+    prefetch_factor: 10
+    dev_prefetch_factor: 4
     shuffle: True
     epochs: 50
-    batch_size: 4
+    batch_size: 8
     to_checkpoint: False
     underrepresented_weight: 14
     freeze_encoder: True
@@ -72,9 +73,7 @@ log:
     num_predictions: 20
 
 model:
-    rnn_cell: "simple"
     patch_size: 16
-    rnn_hidden_dim: 768
     mlp_hidden_dim: 768
     enc_dim: 768
     dec_dim: 768
@@ -87,6 +86,14 @@ model:
     rng: 24
     fusion_layer: True
 
+longitudinal:
+    rnn_hidden_dim: 768
+    rnn_cell: "simple"
+    blocks: 6
+    bidirectional: False
+    dropout_rate: 0.1
+    model: "rnn"
+
 transform:
     train_tf:
         LoadImaged:
@@ -95,10 +102,10 @@ transform:
         EnsureChannelFirstd:
             keys: ['image0', 'image1', 'image2']
             allow_missing_keys: True
-        ToDeviced:
-            keys: ['image0', 'image1', 'image2']
-            allow_missing_keys: True 
-            device: "cuda"
+        # ToDeviced:
+        #     keys: ['image0', 'image1', 'image2']
+        #     allow_missing_keys: True 
+        #     device: "cuda"
         Resized:
             keys: ['image0', 'image1', 'image2']
             mode: ["trilinear", "trilinear", "trilinear"]
@@ -170,10 +177,10 @@ transform:
         EnsureChannelFirstd:
             keys: ['image0', 'image1', 'image2']
             allow_missing_keys: True
-        ToDeviced:
-            keys: ['image0', 'image1', 'image2']
-            allow_missing_keys: True 
-            device: "cuda"
+        # ToDeviced:
+        #     keys: ['image0', 'image1', 'image2']
+        #     allow_missing_keys: True 
+        #     device: "cuda"
         Resized:
             keys: ['image0', 'image1', 'image2']
             mode: ["trilinear", "trilinear", "trilinear"]
