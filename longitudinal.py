@@ -75,7 +75,8 @@ def main(cfg: Config):
     dev_dataset_gnr.manual_seed(0)
 
     labels = [sample['y'] for sample in monai_dict_train]
-    y_weight = np.array([1, cfg.training.underrepresented_weight], dtype=np.float16)
+    _, counts = np.unique(labels, return_counts=True)
+    y_weight = np.array([1, counts[0] / counts[1]], dtype=np.float16)
     samples_weights = y_weight[np.array(labels)]
     sampler = WeightedRandomSampler(
         weights=samples_weights,
@@ -110,7 +111,7 @@ def main(cfg: Config):
         decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
         end_value=cfg.optimizer.end_lr
     )
-    tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
+    tx = optax.inject_hyperparams(optax.adam)(learning_rate=scheduler)
     if cfg.training.freeze_encoder:
         partition_optimizer = {
             "trainable": tx,
