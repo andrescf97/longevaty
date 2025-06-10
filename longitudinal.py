@@ -14,7 +14,7 @@ import json
 import math
 
 from vital.config import Config, load_config_store
-from vital.sampler import BinaryImbalancedBatchSampler
+from vital.sampler import DeterministicImbalancedSampler
 from vital.transformations import make_transformations
 from vital.models.longivity import Longivity
 from vital.models.vital import Vital
@@ -75,17 +75,31 @@ def main(cfg: Config):
     dev_dataset_gnr = Generator(device="cpu")
     dev_dataset_gnr.manual_seed(0)
 
-    sampler = BinaryImbalancedBatchSampler(
+    # labels = [sample['y'] for sample in monai_dict_train]
+    # _, counts = np.unique(labels, return_counts=True)
+    # y_weight = np.array([1, counts[0] / counts[1]], dtype=np.float16)
+    # samples_weights = y_weight[np.array(labels)]
+    # sampler = WeightedRandomSampler(
+    #     weights=samples_weights,
+    #     num_samples=len(samples_weights),
+    #     replacement=True,
+    #     generator=dataset_gnr
+    # )
+
+    sampler_gnr = np.random.default_rng(cfg.training.seed)
+    sampler = DeterministicImbalancedSampler(
         dataset=train_ds,
         batch_size=cfg.training.batch_size,
         minority_class_label=1, 
         minority_samples_per_batch=cfg.training.minority_samples_per_batch,
-        label_key="y"  
+        label_key="y",
+        generator=sampler_gnr,
+        drop_last=True
     )
-    train_loader = DataLoader(train_ds, 
-                              batch_sampler=sampler,
+    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
+                              shuffle=False, sampler=sampler,
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                              persistent_workers=True, pin_memory=False)
+                              persistent_workers=True, pin_memory=False, drop_last=True)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.dev_prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
@@ -162,7 +176,7 @@ def main(cfg: Config):
     time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
 
     # Init running value arrays
-    steps_per_epoch = len(sampler)
+    steps_per_epoch = len(sampler) // cfg.training.batch_size
     dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
 
     probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
