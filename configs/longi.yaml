@@ -87,12 +87,13 @@ model:
     fusion_layer: True
 
 longitudinal:
+    model: "transformer"
     rnn_hidden_dim: 768
     rnn_cell: "simple"
     blocks: 6
+    heads: 6
     bidirectional: False
     dropout_rate: 0.1
-    model: "rnn"
 
 transform:
     train_tf:
@@ -102,10 +103,10 @@ transform:
         EnsureChannelFirstd:
             keys: ['image0', 'image1', 'image2']
             allow_missing_keys: True
-        # ToDeviced:
-        #     keys: ['image0', 'image1', 'image2']
-        #     allow_missing_keys: True 
-        #     device: "cuda"
+        ToDeviced:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True 
+            device: "cuda"
         Resized:
             keys: ['image0', 'image1', 'image2']
             mode: ["trilinear", "trilinear", "trilinear"]

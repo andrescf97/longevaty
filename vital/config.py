@@ -136,6 +136,7 @@ class LongitudinalConfig:
     rnn_hidden_dim: int = 768
     rnn_cell: str = "simple"
     blocks: int = 5
+    heads: int = 12
     bidirectional: bool = True
     dropout_rate: float = 0.2
     model: str = "rnn"

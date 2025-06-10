@@ -100,7 +100,7 @@ def main(cfg: Config):
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
                       blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
-                      rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim,
+                      rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Optimizer                 

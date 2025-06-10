@@ -56,8 +56,8 @@ class Longivity(nnx.Module):
         if longitundinal_model != "rnn":
             self.transformer = nnx.Sequential(*[
                 TransformerEncoder(
-                    hidden_size=hidden_dim,
-                    mlp_dim=hidden_dim * mlp_ratio,
+                    hidden_size=enc_hidden_dim,
+                    mlp_dim=enc_hidden_dim * mlp_ratio,
                     num_heads=heads,
                     dropout_rate=dropout_rate,
                     dtype=dtype,
