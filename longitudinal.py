@@ -17,7 +17,7 @@ from vital.config import Config, load_config_store
 from vital.transformations import make_transformations
 from vital.models.longivity import Longivity
 from vital.models.vital import Vital
-from vital.models.blocks import build_3d_sincos_position_embedding
+from vital.models.blocks import build_3d_sincos_position_embedding, build_1d_sincos_position_embedding
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tools.recon_visualize import visualized_images
@@ -111,7 +111,7 @@ def main(cfg: Config):
         decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
         end_value=cfg.optimizer.end_lr
     )
-    tx = optax.inject_hyperparams(optax.adam)(learning_rate=scheduler)
+    tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
     if cfg.training.freeze_encoder:
         partition_optimizer = {
             "trainable": tx,
@@ -161,6 +161,7 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
+    time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
 
     # Init running value arrays
     steps_per_epoch = len(monai_dict_train) // cfg.training.batch_size
@@ -201,7 +202,7 @@ def main(cfg: Config):
             t_mask_dl = asdlpack(batch['t_mask'])
             t_mask = jnp.from_dlpack(t_mask_dl)
 
-            state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed)
+            state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
             running_loss += loss
             probs[step, :, :] = np.array(_probs)
             golds[step, :] = batch['y'].numpy()
@@ -244,7 +245,7 @@ def main(cfg: Config):
             t_mask_dl = asdlpack(batch['t_mask'])
             t_mask = jnp.from_dlpack(t_mask_dl)
 
-            loss, _probs = dev_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed)
+            loss, _probs = dev_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
 
             running_loss += loss
             dev_probs[step, :, :] = np.array(_probs)
@@ -272,11 +273,12 @@ def train_step(
         y_mask: jax.Array,
         t_mask: jax.Array,
         pos_embed: jax.Array,
+        time_embed: jax.Array
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
     model.train()
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-    (loss, probs), grads = grad_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
+    (loss, probs), grads = grad_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed)
     optimizer.update(grads)
     state = nnx.state((model, optimizer))
     return state, loss, probs
@@ -292,15 +294,16 @@ def dev_step(
         y_mask: jax.Array,
         t_mask: jax.Array,
         pos_embed: jax.Array,
+        time_embed: jax.Array
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
     model.eval()
-    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
+    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed)
     return loss, probs
 
 
-def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed):
-    n_year_logits = model(img0, img1, img2, t_mask, pos_embed)
+def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed):
+    n_year_logits = model(img0, img1, img2, t_mask, pos_embed, time_embed)
     survival_loss = optax.sigmoid_binary_cross_entropy(n_year_logits, y_seq) * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
     return survival_loss, jax.nn.sigmoid(n_year_logits)

@@ -1,4 +1,4 @@
-from vital.models.blocks import MAEVitEncoder
+from vital.models.blocks import MAEVitEncoder, TransformerEncoder
 from flax import nnx
 import jax.numpy as jnp
 from vital.models.rnn import RNN, Bidirectional
@@ -31,10 +31,12 @@ class Longivity(nnx.Module):
         enc_blocks: int = 12,
         enc_heads: int = 12,
         blocks: int = 5,
+        heads: int = 12,
         bidirectional: bool = True,
         dropout_rate: float = 0.2,
         dtype: type = jnp.bfloat16,
         *,
+        mlp_ratio: int = 4,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ) -> nnx.Module:
 
@@ -49,16 +51,32 @@ class Longivity(nnx.Module):
         )
 
         self.dropout = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.cls_token = nnx.Param(jnp.zeros((1, 1, enc_hidden_dim), dtype=dtype))
 
-        self.init_layer, self.layers = make_rnn_layers(
-            cell=rnn_cell,
-            enc_hidden_dim=enc_hidden_dim,
-            rnn_hidden_dim=rnn_hidden_dim,
-            blocks=blocks,
-            bidirectional=bidirectional,
-            dtype=dtype,
-            rngs=rngs
-        )
+        if longitundinal_model != "rnn":
+            self.transformer = nnx.Sequential(*[
+                TransformerEncoder(
+                    hidden_size=hidden_dim,
+                    mlp_dim=hidden_dim * mlp_ratio,
+                    num_heads=heads,
+                    dropout_rate=dropout_rate,
+                    dtype=dtype,
+                    rngs=rngs
+                ) for _ in range(blocks)
+            ])
+            self.is_transformer = True
+            self.final_norm = nnx.LayerNorm(enc_hidden_dim, rngs=rngs, dtype=dtype)
+        else:
+            self.init_layer, self.layers = make_rnn_layers(
+                cell=rnn_cell,
+                enc_hidden_dim=enc_hidden_dim,
+                rnn_hidden_dim=rnn_hidden_dim,
+                blocks=blocks,
+                bidirectional=bidirectional,
+                dtype=dtype,
+                rngs=rngs
+            )
+            self.is_transformer = False
 
         self.classifier = nnx.Sequential(*[
             nnx.Linear(rnn_hidden_dim, hidden_dim, rngs=rngs, dtype=dtype),
@@ -67,18 +85,30 @@ class Longivity(nnx.Module):
             CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
         ])
 
-    def __call__(self, img0, img1, img2, t_mask, pos_embed):
+
+    def __call__(self, img0, img1, img2, t_mask, pos_embed, tim_embed):
         emb0 = self.encoder(img0, pos_embed)[:, 0, :]
         emb1 = self.encoder(img1, pos_embed)[:, 0, :]
         emb2 = self.encoder(img2, pos_embed)[:, 0, :]
 
         batch = jnp.stack((emb0, emb1, emb2), axis=1)
 
-        output = self.init_layer(batch, t_mask)
-        for layer in self.layers:
-            output = layer(output, t_mask)
+        if self.is_transformer:
+            cls_token = jnp.tile(self.cls_token, [batch.shape[0], 1, 1])
+            x = jnp.concatenate([cls_token, batch], axis=1)
+            x = x + tim_embed
+            x = self.dropout(x)
+            output = self.transformer(x)
+            output = self.final_norm(output)
+            final_state = output[:, 0, :]
 
-        final_state = output[:, -1, :] 
+        else:
+            output = self.init_layer(batch, t_mask)
+            for layer in self.layers:
+                output = layer(output, t_mask)
+
+            final_state = output[:, -1, :] 
+
         op = self.classifier(final_state)
         return op
 

@@ -161,3 +161,50 @@ def build_3d_sincos_position_embedding(batch, grid_size, embed_dim, temperature=
     pos_emb = jnp.concatenate([jnp.zeros((1, pos_emb.shape[1])), pos_emb], axis=0)
     pos_emb = jnp.tile(pos_emb, (batch, 1, 1))
     return pos_emb
+
+def build_1d_sincos_position_embedding(
+    batch_size: int,
+    sequence_length: int,
+    embed_dim: int,
+    temperature: float = 10000.,
+    dtype=jnp.bfloat16,
+) -> jax.Array:
+    """
+    Builds a 1D sine-cosine position embedding for a sequence.
+
+    Args:
+        batch_size: The batch size.
+        sequence_length: The length of the sequence (number of tokens).
+        embed_dim: The dimension of the embeddings.
+        temperature: The temperature parameter for the sine-cosine calculation.
+        dtype: The data type for the embeddings.
+        add_cls_token_embedding: If True, prepends a row of zeros to the position
+                                 embeddings, suitable for a CLS token.
+
+    Returns:
+        A JAX array of shape (batch_size, num_positions, embed_dim),
+        where num_positions is sequence_length (+1 if add_cls_token_embedding is True).
+    """
+
+    assert embed_dim % 2 == 0, 'Embed dimension must be divisible by 2 for 1D sin-cos position embedding'
+
+    # Create 1D grid for the sequence length
+    grid_l = jnp.arange(sequence_length, dtype=dtype)
+
+    pos_dim = embed_dim // 2 # Half for sin, half for cos
+    omega = jnp.arange(pos_dim, dtype=dtype) / pos_dim
+    omega = 1. / (temperature ** omega)
+
+    # Apply omega scaling
+    # jnp.einsum('m,d->md', grid_l, omega) calculates outer product
+    out_l = jnp.einsum('m,d->md', grid_l, omega)
+
+    # Compute sin and cos embeddings
+    pos_emb = jnp.concatenate([
+        jnp.sin(out_l), jnp.cos(out_l)
+    ], axis=1) # Concatenate along the embedding dimension
+
+    pos_emb = jnp.concatenate([jnp.zeros((1, embed_dim), dtype=dtype), pos_emb], axis=0)
+    pos_emb = jnp.tile(pos_emb, (batch_size, 1, 1))
+
+    return pos_emb
