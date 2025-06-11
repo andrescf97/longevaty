@@ -85,6 +85,7 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
 
         series = [None, None, None]
         timepoints = [False, False, False]
+        dummy_image = os.path.join(data_root, "images", "dummy_image.npy")
         imgs = [os.path.join(data_root, "images", "dummy_image.npy")] * 3
         masks = [os.path.join(data_root, "images", "dummy_image.npy")] * 3
         for index, row in pid_df.iterrows():
@@ -116,12 +117,12 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
                 pass
             
             sample = {
-                "image0": imgs[0],
-                "image1": imgs[1],
-                "image2": imgs[2],
-                "mask0": masks[0],
-                "mask1": masks[2],
-                "mask2": masks[2],
+                "image0": imgs[0] if t_mask[0] else dummy_image,
+                "image1": imgs[1] if t_mask[1] else dummy_image,
+                "image2": imgs[2] if t_mask[2] else dummy_image,
+                "mask0": masks[0] if t_mask[0] else dummy_image,
+                "mask1": masks[2] if t_mask[1] else dummy_image,
+                "mask2": masks[2] if t_mask[2] else dummy_image,
                 "t_mask": t_mask.tolist(),
                 "y": int(y),
                 "time_at_event": time_at_event,
