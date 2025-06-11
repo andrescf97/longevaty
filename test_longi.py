@@ -17,7 +17,7 @@ from vital.config import Config, load_config_store
 from vital.transformations import make_transformations
 from vital.models.longivity import Longivity
 from vital.models.vital import Vital
-from vital.models.blocks import build_3d_sincos_position_embedding
+from vital.models.blocks import build_3d_sincos_position_embedding, build_1d_sincos_position_embedding
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tools.recon_visualize import visualized_images
@@ -53,7 +53,6 @@ def main(cfg: Config):
         name = "test"
     else:
         name = wandb.run.name
-    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, name)
 
     # Data
     with open(cfg.data.monai_dict_train) as fp:
@@ -74,12 +73,13 @@ def main(cfg: Config):
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
-                      rnn_hidden_dim=cfg.model.rnn_hidden_dim, hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
-                      blocks=cfg.model.enc_depth, heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      rnn_cell=cfg.model.rnn_cell,
+                      hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
+                      enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional,
+                      longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
+                      rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
-    # Load checkpoint
     # Load checkpoint
     (graphdef, state) = nnx.split(model)
 
@@ -100,6 +100,7 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
+    time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
 
     # Init running value arrays
     steps_per_epoch = len(monai_dict_test) // cfg.training.batch_size
@@ -126,7 +127,7 @@ def main(cfg: Config):
         t_mask_dl = asdlpack(batch['t_mask'])
         t_mask = jnp.from_dlpack(t_mask_dl)
 
-        loss, _probs = test_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed)
+        loss, _probs = test_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
         probs[step, :, :] = np.array(_probs)
         golds[step, :] = batch['y'].numpy()
         censors[step, :] = batch['time_at_event'].numpy()
@@ -168,43 +169,6 @@ def main(cfg: Config):
     return
 
 @jax.jit
-def train_step(
-        graphdef: nnx.GraphDef,
-        state: nnx.State,
-        img0: jax.Array,
-        img1: jax.Array,
-        img2: jax.Array,
-        y_seq: jax.Array,
-        y_mask: jax.Array,
-        t_mask: jax.Array,
-        pos_embed: jax.Array,
-):
-    (model, optimizer) = nnx.merge(graphdef, state)
-    model.train()
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-    (loss, probs), grads = grad_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
-    optimizer.update(grads)
-    state = nnx.state((model, optimizer))
-    return state, loss, probs
-
-@jax.jit
-def dev_step(
-        graphdef: nnx.GraphDef,
-        state: nnx.State,
-        img0: jax.Array,
-        img1: jax.Array,
-        img2: jax.Array,
-        y_seq: jax.Array,
-        y_mask: jax.Array,
-        t_mask: jax.Array,
-        pos_embed: jax.Array,
-):
-    (model, optimizer) = nnx.merge(graphdef, state)
-    model.eval()
-    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
-    return loss, probs
-
-@jax.jit
 def test_step(
         graphdef: nnx.GraphDef,
         state: nnx.State,
@@ -215,15 +179,16 @@ def test_step(
         y_mask: jax.Array,
         t_mask: jax.Array,
         pos_embed: jax.Array,
+        time_embed: jax.Array
 ):
     model = nnx.merge(graphdef, state)
     model.eval()
-    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed)
+    (loss, probs) = loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed)
     return loss, probs
 
 
-def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed):
-    n_year_logits = model(img0, img1, img2, t_mask, pos_embed)
+def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed):
+    n_year_logits = model(img0, img1, img2, t_mask, pos_embed, time_embed)
     survival_loss = optax.sigmoid_binary_cross_entropy(n_year_logits, y_seq) * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
     return survival_loss, jax.nn.sigmoid(n_year_logits)
