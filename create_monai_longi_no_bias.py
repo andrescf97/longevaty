@@ -16,7 +16,7 @@ logger.setLevel(logging.INFO)
 from vital.config import load_config_store
 load_config_store()
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="mae.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="longi.yaml")
 def main(cfg):
     df = pd.read_csv("/pool/data/lung/NLST/real_nlst_series.csv")
     participants_df = pd.read_csv("/pool/data/lung/NLST/participant_d040722.csv")
@@ -110,10 +110,11 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
         t_masks = [[int(i in combo) for i in range(3)] for combo in combinations]
         t_masks = np.array(t_masks)
 
-        sorted_t_masks, indices_t_sort = sort_ones_to_right_numpy(t_masks)
-        imgs = [imgs[i] for i in indices_t_sort]
-        masks = [masks[i] for i in indices_t_sort]
         for t_mask in t_masks:
+            sorted_t_masks, indices_t_sort = sort_ones_to_right_numpy(t_mask)
+            sorted_imgs = [imgs[i] for i in indices_t_sort]
+            sorted_masks = [masks[i] for i in indices_t_sort]
+
             tp = np.where(t_mask == 1)[0][-1]
             try:
                 y, y_seq, y_mask, time_at_event = get_label(pt_metadata, tp, max_followup)
@@ -121,12 +122,12 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
                 pass
             
             sample = {
-                "image0": imgs[0] if sorted_t_masks[0] else dummy_image,
-                "image1": imgs[1] if sorted_t_masks[1] else dummy_image,
-                "image2": imgs[2] if sorted_t_masks[2] else dummy_image,
-                "mask0": masks[0] if sorted_t_masks[0] else dummy_image,
-                "mask1": masks[2] if sorted_t_masks[1] else dummy_image,
-                "mask2": masks[2] if sorted_t_masks[2] else dummy_image,
+                "image0": sorted_imgs[0] if sorted_t_masks[0] else dummy_image,
+                "image1": sorted_imgs[1] if sorted_t_masks[1] else dummy_image,
+                "image2": sorted_imgs[2] if sorted_t_masks[2] else dummy_image,
+                "mask0": sorted_masks[0] if sorted_t_masks[0] else dummy_image,
+                "mask1": sorted_masks[2] if sorted_t_masks[1] else dummy_image,
+                "mask2": sorted_masks[2] if sorted_t_masks[2] else dummy_image,
                 "t_mask": sorted_t_masks.tolist(),
                 "y": int(y),
                 "time_at_event": time_at_event,
