@@ -2,6 +2,8 @@ import torch.nn.functional as F
 from einops import rearrange
 import torch
 from monai import transforms
+from monai.transforms.intensity.array import ScaleIntensityRange
+import SimpleITK as sitk
 import numpy as np
 
 
@@ -119,18 +121,6 @@ class Patchify(transforms.MapTransform):
         patched_image = extract_patches(image,self.patch_size)
         data["image"] = patched_image.squeeze()
 
-        data.pop("mask")
-        data.pop("exam_str")
-        data.pop("exam")
-        data.pop("accession")
-        data.pop("series")
-        data.pop("study")
-        data.pop("pid")
-        data.pop("screen_timepoint")
-        data.pop("device")
-        data.pop("institution")
-        data.pop("cancer_laterality")
-        data.pop("annotation", None)
         return data
 
 
@@ -290,4 +280,83 @@ class PatchifyLongi(transforms.MapTransform):
         data.pop("mask2")
 
         data.pop("institution")
+        return data
+
+class ScaleIntensityCondition(transforms.MapTransform):
+    """
+    Scale intensity of the input image based on a condition.
+    
+    Args:
+        keys (list): List of keys to apply the transformation to.
+        scale (float): Scaling factor for the intensity.
+        condition (callable): A function that takes the image and returns a boolean mask.
+    """
+    def __init__(self,
+                 keys,
+                 a_min=0.0,
+                 a_max=1.0,
+                 b_min=0.0,
+                 b_max=1.0,
+                 clip=True,
+                 dtype=np.float32):
+        super().__init__(keys)
+        self.a_min = a_min
+        self.a_max = a_max
+        self.b_min = b_min
+        self.b_max = b_max
+        self.clip = clip
+        self.scaler = ScaleIntensityRange(a_min, a_max, b_min, b_max, clip, dtype)
+
+    def __call__(self, data):
+        if data['src'] == "NLST":
+            return data
+        data['image'] = self.scaler(data['image'])
+        return data
+        
+class Load(transforms.MapTransform):
+    """
+    A custom MONAI transform to efficiently load NIfTI (.nii, .nii.gz)
+    and NumPy (.npy) files from a dictionary of file paths.
+
+    This loader is designed to be a faster alternative to MONAI's `LoadImaged`.
+    It uses SimpleITK for NIfTI files (which is generally faster for I/O)
+    and numpy for .npy files directly. NIfTI images are transposed to
+    (X, Y, Z) axis order upon loading.
+
+    Args:
+        keys (list): A list of keys in the input dictionary that correspond
+                     to the file paths to be loaded.
+    """
+    def __init__(self, keys):
+        super().__init__(keys)
+
+    def __call__(self, data):
+        """
+        Loads the image data for the specified keys in the data dictionary.
+
+        Args:
+            data (dict): A dictionary where keys specified in `self.keys`
+                         contain file paths.
+
+        Returns:
+            dict: The dictionary with file paths replaced by the loaded image data
+                  as NumPy arrays.
+        """
+        for key in self.keys:
+            filepath = data[key]
+            if filepath.endswith(('.nii', '.nii.gz')):
+                # Use SimpleITK to load NIfTI files
+                img_obj = sitk.ReadImage(filepath)
+                array = sitk.GetArrayFromImage(img_obj)
+                # Transpose from SimpleITK's (Z, Y, X) to (X, Y, Z)
+                data[key] = array.transpose(2, 1, 0)
+            elif filepath.endswith('.npy'):
+                # Use numpy to load .npy files
+                data[key] = np.load(filepath)
+            else:
+                raise ValueError(f"Unsupported file format for {filepath}. "
+                                    "Only .nii, .nii.gz, and .npy are supported.")
+            # Ensure channel dimension is added if missing
+            if data[key].ndim == 3:
+                data[key] = np.expand_dims(data[key], axis=0)
         return data

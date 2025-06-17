@@ -2,6 +2,7 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 from flax import nnx
+import math
 
 class PatchEmbed1D(nnx.Module):
     def __init__(self, patch_size=16, embed_dim=768, patch_dim=3, dtype=jnp.bfloat16, rngs = nnx.Rngs(0)):
@@ -122,8 +123,8 @@ class TransformerEncoder(nnx.Module):
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
 
-    def __call__(self, x: jax.Array) -> jax.Array:
-        x = x + self.attn(self.norm1(x))
+    def __call__(self, x: jax.Array, mask: jax.Array = None) -> jax.Array:
+        x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -208,3 +209,38 @@ def build_1d_sincos_position_embedding(
     pos_emb = jnp.tile(pos_emb, (batch_size, 1, 1))
 
     return pos_emb
+
+def build_rel_time_embeddings(
+        time: jax.Array,
+        dim: int = 768,
+        max_period: int = 10000,
+        dtype: type = jnp.bfloat16,
+) -> jax.Array:
+    """
+    Generates sinusoidal positional embeddings for scalar time values.
+    Assumes `time` is always of shape [batch_size, sequence_length].
+
+    Args:
+        time (jnp.ndarray): A tensor of scalar time values, shape [batch_size, sequence_length].
+        dim (int): The dimension of the output sinusoidal embedding. Must be even.
+        max_period (int): The maximum period for the sinusoidal functions.
+
+    Returns:
+        jnp.ndarray: The sinusoidal embeddings, shape [batch_size, sequence_length, dim].
+    """
+    if dim % 2 != 0:
+        raise ValueError("Sinusoidal embedding dimension must be even.")
+
+    original_shape = time.shape # This will now always be (B, S)
+    time_flat = time.reshape(-1, 1).astype(jnp.float32) # Flattens to [B*S, 1]
+
+    half_dim = dim // 2
+    epsilon = 1e-6
+    exponent = math.log(max_period) / (half_dim - epsilon) if half_dim > 0 else 0.0
+    frequencies = jnp.exp(jnp.arange(half_dim, dtype=jnp.float32) * -exponent)
+    
+    args = time_flat * frequencies[jnp.newaxis, :]
+    embeddings = jnp.concatenate((jnp.sin(args), jnp.cos(args)), axis=-1) # Result: [B*S, dim]
+
+    # Reshape back to [B, S, dim]
+    return embeddings.reshape(*original_shape, dim)

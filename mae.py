@@ -34,6 +34,10 @@ import orbax.checkpoint as ocp
 
 from dlpack import asdlpack
 
+import resource
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
+
 load_config_store()
 
 @hydra.main(config_path="./configs", config_name='mae.yaml', version_base=None)
@@ -175,7 +179,7 @@ def main(cfg: Config):
             wandb.log({"dev_media/viz": vis_img})
         
         # Checkpointing
-        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
             if running_loss <= ckpt_metric:
                 best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
                 ckpt_metric = running_loss

@@ -54,7 +54,7 @@ class Longivity(nnx.Module):
         self.cls_token = nnx.Param(jnp.zeros((1, 1, enc_hidden_dim), dtype=dtype))
 
         if longitundinal_model != "rnn":
-            self.transformer = nnx.Sequential(*[
+            self.transformer = [
                 TransformerEncoder(
                     hidden_size=enc_hidden_dim,
                     mlp_dim=enc_hidden_dim * mlp_ratio,
@@ -63,9 +63,15 @@ class Longivity(nnx.Module):
                     dtype=dtype,
                     rngs=rngs
                 ) for _ in range(blocks)
-            ])
+            ]
             self.is_transformer = True
             self.final_norm = nnx.LayerNorm(enc_hidden_dim, rngs=rngs, dtype=dtype)
+
+            self.time_embedding = nnx.Sequential(*[
+                nnx.Linear(enc_hidden_dim, enc_hidden_dim, rngs=rngs, dtype=dtype),
+                nnx.silu,
+                nnx.Linear(enc_hidden_dim, enc_hidden_dim, rngs=rngs, dtype=dtype),
+            ])
         else:
             self.init_layer, self.layers = make_rnn_layers(
                 cell=rnn_cell,
@@ -94,13 +100,15 @@ class Longivity(nnx.Module):
         batch = jnp.stack((emb0, emb1, emb2), axis=1)
 
         if self.is_transformer:
+            batch = self.time_embedding(tim_embed) + batch
             cls_token = jnp.tile(self.cls_token, [batch.shape[0], 1, 1])
             x = jnp.concatenate([cls_token, batch], axis=1)
-            x = x + tim_embed
             x = self.dropout(x)
-            output = self.transformer(x)
-            output = self.final_norm(output)
-            final_state = output[:, 0, :]
+            t_mask = jnp.concatenate([jnp.ones((x.shape[0], 1)), t_mask], axis=1, dtype=jnp.bool)
+            for layer in self.transformer:
+                x = layer(x, mask=t_mask)
+            x = self.final_norm(x)
+            final_state = x[:, 0, :]
 
         else:
             output = self.init_layer(batch, t_mask)

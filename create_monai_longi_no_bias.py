@@ -111,7 +111,9 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
         t_masks = np.array(t_masks)
 
         for t_mask in t_masks:
-            sorted_t_masks, indices_t_sort = sort_ones_to_right_numpy(t_mask)
+            rel_dist = get_relative_time_distance(t_mask)
+
+            sorted_t_masks, indices_t_sort = sort_ones_to_left_numpy(t_mask)
             sorted_imgs = [imgs[i] for i in indices_t_sort]
             sorted_masks = [masks[i] for i in indices_t_sort]
 
@@ -129,6 +131,7 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
                 "mask1": sorted_masks[2] if sorted_t_masks[1] else dummy_image,
                 "mask2": sorted_masks[2] if sorted_t_masks[2] else dummy_image,
                 "t_mask": sorted_t_masks.tolist(),
+                "rel_t": rel_dist,
                 "y": int(y),
                 "time_at_event": time_at_event,
                 "y_seq": y_seq,
@@ -270,7 +273,7 @@ def get_cancer_lobe(pt_metadata):
         else:
             return (4, False)
 
-def sort_ones_to_right_numpy(t_mask: np.ndarray):
+def sort_ones_to_left_numpy(t_mask: np.ndarray):
     """
     Sorts a NumPy array containing 0s and 1s so that all 0s come before all 1s,
     and returns the transformed array along with the permutation indices.
@@ -287,9 +290,25 @@ def sort_ones_to_right_numpy(t_mask: np.ndarray):
     if t_mask.ndim != 1:
         raise ValueError("Input t_mask must be a 1D NumPy array.")
     
-    transformation_indices = np.argsort(t_mask)
+    transformation_indices = np.argsort(-t_mask)
     transformed_mask = t_mask[transformation_indices]
     return transformed_mask, transformation_indices
+
+def get_relative_time_distance(t_mask):
+    rel_dist = [-1] * 3
+
+    rel_time = 0
+    first = True
+    i = 0
+    for t in t_mask:
+        if t == 1:
+            rel_dist[i] = rel_time
+            i += 1
+            if first:
+                first = False
+        if not first:
+            rel_time += 1
+    return rel_dist
 
 if __name__ == "__main__":
     main()
