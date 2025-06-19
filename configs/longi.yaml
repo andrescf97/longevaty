@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: True
+    dry_run: False
     project_name: "longi-jax"
     task: "survival"
     entity: "mri-ai-lab"
@@ -41,8 +41,9 @@ training:
     to_checkpoint: False
     sampler: "stratified"
     underrepresented_weight: 14
-    minority_samples_per_batch: 2
+    minority_samples_per_batch: 1
     freeze_encoder: True
+    freeze_mha: True
 
 optimizer:
     lr_scheduler: onecycle
@@ -53,26 +54,31 @@ optimizer:
 
 attention:
     heads: 4
-    use_cls: False
-    use_mean_token: True
+    use_cls: True
+    use_mean_token: False
 
 loss:
     sw: 10
     aw: 1
 
 log:
+    use_checkpoint: True
     ckpt_loc: "/nlst_data/checkpoints/longivity/"
-    ckpt_load_loc: "/nlst_data/checkpoints/mae/"
+    ckpt_load_loc: "/nlst_data/checkpoints/lungevity/"
     mae_ckpt_load: 'vit-last'
-    mae_use_checkpoint: 'astral-plasma-71'
+    mae_use_checkpoint: 'test'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
-    ckpt_load: 'vit-last'
-    use_checkpoint: 'test'
-    checkpoint_at_epoch: 1000
-    log_at_these_steps: 1000
-    log_scans_at_these_epochs: 5
+    ckpt_load: 'vit'
+    checkpoint_at_epoch: 2
+    log_at_these_steps: 500
+    log_scans_at_these_epochs: 2
+    finetuned_use_checkpoint: 'silver-mountain-94'
+    finetuned_ckpt_load: 'vit'
+    continue_use_checkpoint: 'test'
+    continue_log_ckpt_load: 'test'
     num_predictions: 20
+    pretrained_model_type: 'finetuned'
 
 model:
     patch_size: 16

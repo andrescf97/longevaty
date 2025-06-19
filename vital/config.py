@@ -56,6 +56,7 @@ class TrainingConfig:
     underrepresented_weight: float = 14
     minority_samples_per_batch: int = 1
     freeze_encoder: bool = False
+    freeze_mha: bool = False
 
 @dataclass
 class OptimizerConfig:
@@ -109,6 +110,10 @@ class LoggingConfig:
     ckpt_best: str = 'sybil-vit'
     ckpt_last: str = 'sybil-vit-last'
     ckpt_load: str = 'sybil-vit-last'
+    finetuned_use_checkpoint: str = MISSING
+    finetuned_ckpt_load: str = MISSING
+    continue_use_checkpoint: str = MISSING
+    continue_log_ckpt_load: str = MISSING
     use_checkpoint: str = MISSING
     checkpoint_at_epoch: int = MISSING
     log_at_these_steps: int = MISSING
@@ -117,6 +122,8 @@ class LoggingConfig:
     cancer_cases_to_log: int = 1
     laterality_cases_to_log: int = 1
     healthy_cases_to_log: int = 1
+    pretrained_model_type: str = "pretrained"
+    
 
 @dataclass
 class ModelConfig:

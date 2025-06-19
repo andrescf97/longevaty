@@ -75,7 +75,8 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_cls=cfg.attention.use_cls, 
+                      use_mean_token=cfg.attention.use_mean_token,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       dtype=dtype, rngs=nnx.Rngs(0))
@@ -100,7 +101,8 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
-    time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
+    #time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
+    
 
     # Init running value arrays
     steps_per_epoch = len(monai_dict_test) // cfg.training.batch_size
