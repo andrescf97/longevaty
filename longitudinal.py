@@ -17,6 +17,7 @@ from vital.config import Config, load_config_store
 from vital.sampler import DeterministicImbalancedSampler
 from vital.transformations import make_transformations
 from vital.models.longivity import Longivity
+from vital.models.lungevity import LungeVity
 from vital.models.vital import Vital
 from vital.models.blocks import build_3d_sincos_position_embedding, build_1d_sincos_position_embedding, build_rel_time_embeddings
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
@@ -61,6 +62,7 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+        
 
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
 
@@ -112,7 +114,8 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, use_cls=cfg.attention.use_cls, 
+                      use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       dtype=dtype, rngs=nnx.Rngs(0))
@@ -126,15 +129,21 @@ def main(cfg: Config):
         end_value=cfg.optimizer.end_lr
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
-    if cfg.training.freeze_encoder:
+    if cfg.training.freeze_encoder or cfg.training.freeze_mha:
         partition_optimizer = {
             "trainable": tx,
             "frozen": optax.set_to_zero()
         }
         abs_state = nnx.eval_shape(lambda: nnx.state(model, nnx.Param))
+        
+        def should_freeze(path):
+            return (cfg.training.freeze_encoder and 'encoder' in path) or \
+                (cfg.training.freeze_mha and 'mha' in path)
+        
         param_partitions = flax.traverse_util.path_aware_map(
-                            lambda path, v: 'frozen' if 'encoder' in path else 'trainable', 
-                            abs_state.raw_mapping)
+            lambda path, v: 'frozen' if should_freeze(path) else 'trainable', 
+            abs_state.raw_mapping
+        )
         nnx.replace_by_pure_dict(abs_state, param_partitions)
         tx = optax.multi_transform(partition_optimizer, abs_state)
     optimizer = nnx.Optimizer(model=model, tx=tx)
@@ -144,28 +153,80 @@ def main(cfg: Config):
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
     mae_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint, cfg.log.mae_ckpt_load), options=options)
-    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
+    fine_tuned_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.finetuned_use_checkpoint, cfg.log.finetuned_ckpt_load), options=options)
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.continue_use_checkpoint, cfg.log.continue_log_ckpt_load), options=options)
     best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
+    last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
 
     start_epoch = 0
     if cfg.log.use_checkpoint:
         start_epoch, prev_state = load_checkpoint(load_mngr)
         state = prev_state if prev_state is not None else state
 
-    if prev_state is None:
-        mae_model = nnx.eval_shape(
-            lambda: Vital(patch_size=cfg.model.patch_size, enc_dim=cfg.model.enc_dim, dec_dim=cfg.model.dec_dim,
-                            dec_blocks=cfg.model.dec_depth, dec_heads=cfg.model.dec_heads, enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads,
-                            drouput_rate=cfg.model.dropout_rate, dtype=dtype,
-                            rngs=nnx.Rngs(cfg.model.rng))
-        )
-        _, mae_state = nnx.split(mae_model)
-        s = mae_mngr.restore(mae_mngr.latest_step())
-        nnx.replace_by_pure_dict(mae_state, process_raw_dict(s['0']))
-        state[0].encoder = mae_state.encoder
 
+    if prev_state is None:
+        if cfg.log.pretrained_model_type == "pretrained":
+            # Load from MAE Vital model
+            backbone = nnx.eval_shape(
+                lambda: Vital(
+                    patch_size=cfg.model.patch_size, 
+                    enc_dim=cfg.model.enc_dim, 
+                    dec_dim=cfg.model.dec_dim,
+                    dec_blocks=cfg.model.dec_depth, 
+                    dec_heads=cfg.model.dec_heads, 
+                    enc_blocks=cfg.model.enc_depth, 
+                    enc_heads=cfg.model.enc_heads,
+                    drouput_rate=cfg.model.dropout_rate, 
+                    dtype=dtype,
+                    rngs=nnx.Rngs(cfg.model.rng)
+                )
+            )
+            
+            _, backbone_state = nnx.split(backbone)
+            s = mae_mngr.restore(mae_mngr.latest_step())  # Consider renaming to pretrained_mngr
+            nnx.replace_by_pure_dict(backbone_state, process_raw_dict(s['0']))
+            
+        elif cfg.log.pretrained_model_type == "finetuned":
+            # Load from LungeVity model
+            backbone = nnx.eval_shape(
+                lambda: LungeVity(
+                    patch_size=cfg.model.patch_size, 
+                    hidden_dim=cfg.model.enc_dim,
+                    max_followup=cfg.data.max_followup,
+                    blocks=cfg.model.enc_depth, 
+                    heads=cfg.model.enc_heads,
+                    use_cls=cfg.attention.use_cls, 
+                    use_mean_token=cfg.attention.use_mean_token,
+                    guided_attention_heads=cfg.attention.heads,
+                    dropout_rate=cfg.model.dropout_rate,
+                    dtype=dtype,
+                    rngs=nnx.Rngs(cfg.model.rng)
+                )
+            )
+            
+            _, backbone_state = nnx.split(backbone)
+            s = fine_tuned_mngr.restore(fine_tuned_mngr.latest_step())  # Consider renaming to pretrained_mngr
+            nnx.replace_by_pure_dict(backbone_state, process_raw_dict(s['0']))
+        else:
+            raise ValueError(f"Unknown pretrained_model_type: {cfg.log.pretrained_model_type}")
+        
+        # _, backbone_state = nnx.split(backbone)
+        # s = mae_mngr.restore(mae_mngr.latest_step())  # Consider renaming to pretrained_mngr
+        # nnx.replace_by_pure_dict(backbone_state, process_raw_dict(s['0']))
+        
+        # Transfer weights based on model type
+        if cfg.log.pretrained_model_type == "pretrained":
+            # Only transfer encoder from MAE
+            state[0].encoder = backbone_state.encoder
+        elif cfg.log.pretrained_model_type == "finetuned":
+            # You can choose what to transfer from LungeVity
+            state[0].encoder = backbone_state.encoder
+            # Optionally transfer other components:
+            state[0].mha = backbone_state.mha
+            # state[0].classifier = pretrained_state.classifier  # Full model transfer
+        
         del s
-        del mae_state
+        del backbone_state
         del mae_mngr
 
     img_size = cfg.data.img_size
@@ -217,7 +278,9 @@ def main(cfg: Config):
             rel_time_dl = asdlpack(batch['rel_t'])
             rel_time = jnp.from_dlpack(rel_time_dl)
 
-            time_embed = build_rel_time_embeddings(rel_time, dim=cfg.model.enc_dim, dtype=dtype)
+            multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+
+            time_embed = build_rel_time_embeddings(rel_time, dim=(multiplier * cfg.model.enc_dim), dtype=dtype)
             state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
 
             running_loss += loss
@@ -231,7 +294,7 @@ def main(cfg: Config):
                 if cfg.training.freeze_encoder:
                     wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
                 else:
-                    wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
+                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
@@ -277,6 +340,7 @@ def main(cfg: Config):
             if survival_metrics['dev/c_index'] >= ckpt_metric:
                 best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
                 ckpt_metric = survival_metrics['dev/c_index']
+            last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
     return
 
 @jax.jit
@@ -320,7 +384,7 @@ def dev_step(
 
 
 def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed):
-    n_year_logits = model(img0, img1, img2, t_mask, pos_embed, time_embed)
+    n_year_logits, attn_weights = model(img0, img1, img2, t_mask, pos_embed, time_embed)
     survival_loss = optax.sigmoid_binary_cross_entropy(n_year_logits, y_seq) * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
     return survival_loss, jax.nn.sigmoid(n_year_logits)
@@ -335,4 +399,4 @@ def process_raw_dict(raw_state_dict):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
-    main() 
+    main()

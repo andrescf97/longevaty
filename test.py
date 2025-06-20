@@ -167,41 +167,19 @@ def main(cfg: Config):
             "cancer_risk": probs[i][0].tolist(),
             "gold": golds[i][0].tolist(),
             "censors": censors[i][0].tolist(),
-            "pid": monai_dict_test[2*i]['pid'],
-            "study": monai_dict_test[2*i]['study'],
-            "series": monai_dict_test[2*i]['series'],
-            "exam": monai_dict_test[2*i]['exam'],
-            "accession": monai_dict_test[2*i]['accession'],
-            "screen_timepoint": monai_dict_test[2*i]['screen_timepoint'],
-            "device": monai_dict_test[2*i]['device'],
-            "institution": monai_dict_test[2*i]['institution'],
-            "cancer_laterality": monai_dict_test[2*i]['cancer_laterality'],
-            "y": monai_dict_test[2*i]['y'],
-            "time_at_event": monai_dict_test[2*i]['time_at_event'],
-            "y_seq": monai_dict_test[2*i]['y_seq'],
-            "y_mask": monai_dict_test[2*i]['y_mask']
+            "pid": monai_dict_test[i]['pid'],
+            "study": monai_dict_test[i]['study'],
+            "series": monai_dict_test[i]['series'],
+            "screen_timepoint": monai_dict_test[i]['screen_timepoint'],
+            "institution": monai_dict_test[i]['institution'],
+            "cancer_laterality": monai_dict_test[i]['cancer_laterality'],
+            "y": monai_dict_test[i]['y'],
+            "time_at_event": monai_dict_test[i]['time_at_event'],
+            "y_seq": monai_dict_test[i]['y_seq'],
+            "y_mask": monai_dict_test[i]['y_mask'],
         })
 
-        res.append({
-            "cancer_risk": probs[i][1].tolist(),
-            "gold": golds[i][1].tolist(),
-            "censors": censors[i][1].tolist(),
-            "pid": monai_dict_test[2*i + 1]['pid'],
-            "study": monai_dict_test[2*i + 1]['study'],
-            "series": monai_dict_test[2*i + 1]['series'],
-            "exam": monai_dict_test[2*i + 1]['exam'],
-            "accession": monai_dict_test[2*i + 1]['accession'],
-            "screen_timepoint": monai_dict_test[2*i + 1]['screen_timepoint'],
-            "device": monai_dict_test[2*i + 1]['device'],
-            "institution": monai_dict_test[2*i + 1]['institution'],
-            "cancer_laterality": monai_dict_test[2*i + 1]['cancer_laterality'],
-            "y": monai_dict_test[2*i + 1]['y'],
-            "time_at_event": monai_dict_test[2*i + 1]['time_at_event'],
-            "y_seq": monai_dict_test[2*i + 1]['y_seq'],
-            "y_mask": monai_dict_test[2*i + 1]['y_mask']
-        })
-
-    with open(f"{cfg.log.ckpt_loc}/predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
+    with open(f"{cfg.log.ckpt_loc}/cs_predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
         json.dump(res, fp, indent=4)
     return
 

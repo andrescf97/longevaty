@@ -1,0 +1,160 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: False
+    project_name: "mae-jax"
+    task: "mae"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
+    monai_dict_train: "/pool/data/lung/NLST/mae_nlst_ctrate_monai_train.json"
+    monai_dict_dev: "/pool/data/lung/NLST/mae_nlst_ctrate_monai_dev.json"
+    monai_dict_test: "/pool/data/lung/NLST/mae_nlst_ctrate_monai_test.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    dtype: bfloat16
+    mask_ratio: 0.75
+    seed: 0
+    num_workers: 10
+    dev_num_workers: 8
+    test_num_workers: 1
+    prefetch_factor: 5
+    shuffle: True
+    epochs: 600
+    batch_size: 2
+    to_checkpoint: False
+
+optimizer:
+    lr_scheduler: onecycle
+    peak_lr: 1.5e-4
+    init_lr: 5e-5
+    end_lr: 8e-6
+    warmup_epochs: 50
+
+log:
+    ckpt_loc: "/nlst_data/checkpoints/mae"
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit-last'
+    checkpoint_at_epoch: 2
+    log_at_these_steps: 500
+    log_scans_at_these_epochs: 2
+    use_checkpoint: 'mae_lemon-butterfly-383.ckpt'
+    num_predictions: 20
+
+model:
+    patch_size: 16
+    enc_dim: 1296
+    dec_dim: 384
+    dropout_rate: 0.1
+    enc_heads: 16
+    enc_depth: 32
+    dec_heads: 6
+    dec_depth: 4
+    in_chans: 1
+    rng: 24
+
+transform:
+    train_tf:
+        LoadImaged:
+            keys: ['image']
+            allow_missing_keys: True
+        ToDeviced:
+            keys: ['image']
+            allow_missing_keys: True 
+            device: "cuda"
+        EnsureChannelFirstd:
+            keys: ['image']
+            allow_missing_keys: True
+        ScaleIntensityRanged:
+            keys: ['image']
+            a_min: -1350
+            a_max: 150
+            b_min: -1
+            b_max: 1
+            clip: True
+        Resized:
+            keys: ['image']
+            mode: ["trilinear"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        # RandHistogramShiftd:
+        #     keys: ['image']
+        #     prob: 0.33
+        #     num_control_points: [5,8]
+        RandFlipd_1:
+            keys: ['image']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 0
+        RandFlipd_2:
+            keys: ['image']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 1
+        RandFlipd_3:
+            keys: ['image']
+            allow_missing_keys: True
+            prob: 0.33
+            spatial_axis: 2
+        RandRotated:
+            keys: ['image']
+            allow_missing_keys: True
+            prob: 0.5
+            range_x: 0.2
+            range_y: 0.2
+            range_z: 0.2
+            mode: ['bilinear']
+        Patchify_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+        ToTensord:
+            keys: ['image']
+            allow_missing_keys: True
+            track_meta: False
+            dtype: bfloat16
+            device: "cuda"
+
+    dev_tf:
+        LoadImaged:
+            keys: ['image']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image']
+            allow_missing_keys: True
+        ScaleIntensityRanged:
+            keys: ['image']
+            a_min: -1350
+            a_max: 150
+            b_min: -1
+            b_max: 1
+            clip: True
+        Resized:
+            keys: ['image']
+            mode: ["trilinear"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        Patchify_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+        ToTensord:
+            keys: ['image']
+            allow_missing_keys: True
+            track_meta: False
+            dtype: bfloat16
+            device: "cuda"

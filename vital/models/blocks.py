@@ -124,6 +124,8 @@ class TransformerEncoder(nnx.Module):
         )
 
     def __call__(self, x: jax.Array, mask: jax.Array = None) -> jax.Array:
+        if mask is not None:
+            mask = mask[:, None, None, :]
         x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.mlp(self.norm2(x))
         return x

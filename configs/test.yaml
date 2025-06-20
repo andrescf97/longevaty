@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: True
+    dry_run: False
     project_name: "test-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -19,9 +19,9 @@ data:
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
     data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
-    monai_dict_train: "/mnt/nlst_data/npy/train_vital_25.json"
-    monai_dict_dev: "/mnt/nlst_data/npy/dev_vital_25.json"
-    monai_dict_test: "/mnt/nlst_data/npy/test_vital_25.json"
+    monai_dict_train: "/pool/users/braj/mae-jax/data/train_longi.json"
+    monai_dict_dev: "/pool/users/braj/mae-jax/data/dev_longi.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/test_our.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -50,21 +50,21 @@ optimizer:
 attention:
     heads: 12
     use_cls: True
-    use_mean_token: False
+    use_mean_token: True
 
 loss:
     sw: 10
     aw: 1
 
 log:
-    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
-    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_loc: "/pool/users/braj/mae-jax/checkpoints/lungevity"
+    ckpt_load_loc: "/pool/users/braj/mae-jax/checkpoints/lungevity"
     mae_ckpt_load: 'vit-last'
     mae_use_checkpoint: 'astral-plasma-71'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit'
-    use_checkpoint: 'klingon-first-contact-82'
+    use_checkpoint: 'silver-mountain-94'
     checkpoint_at_epoch: 1000
     log_at_these_steps: 2
     log_scans_at_these_epochs: 1
