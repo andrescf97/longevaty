@@ -17,7 +17,7 @@ from vital.config import Config, load_config_store
 from vital.transformations import make_transformations
 from vital.models.longivity import Longivity
 from vital.models.vital import Vital
-from vital.models.blocks import build_3d_sincos_position_embedding, build_1d_sincos_position_embedding
+from vital.models.blocks import build_3d_sincos_position_embedding, build_1d_sincos_position_embedding, build_rel_time_embeddings
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tools.recon_visualize import visualized_images
@@ -85,13 +85,39 @@ def main(cfg: Config):
     (graphdef, state) = nnx.split(model)
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
-    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
+    checkpoint_path = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load)
 
-    ckpt_state = load_mngr.restore(load_mngr.latest_step())
-    nnx.replace_by_pure_dict(state, process_raw_dict(ckpt_state['0']))
+    print(f"Looking for checkpoint at: {checkpoint_path}")
 
-    del ckpt_state
-    del load_mngr
+    try:
+        # Check if checkpoint directory exists
+        if not os.path.exists(checkpoint_path):
+            print(f"Checkpoint directory does not exist: {checkpoint_path}")
+            print("Using random weights for testing...")
+            load_mngr = None
+        else:
+            load_mngr = ocp.CheckpointManager(checkpoint_path, options=options)
+            
+            # Check if there are any saved steps
+            latest_step = load_mngr.latest_step()
+            if latest_step is None:
+                print(f"No checkpoint steps found in: {checkpoint_path}")
+                print("Using random weights for testing...")
+                load_mngr = None
+            else:
+                print(f"Found checkpoint at step: {latest_step}")
+                ckpt_state = load_mngr.restore(latest_step)
+                nnx.replace_by_pure_dict(state, process_raw_dict(ckpt_state['0']))
+                print("Successfully loaded checkpoint weights")
+                
+                del ckpt_state
+                del load_mngr
+
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        print("Using random weights for testing...")
+        load_mngr = None
+
 
     # Position embeddings
     img_size = cfg.data.img_size
@@ -100,9 +126,10 @@ def main(cfg: Config):
         img_size[1] / cfg.model.patch_size,
         img_size[2] / cfg.model.patch_size
     ]
-    pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
-    #time_embed = build_1d_sincos_position_embedding(cfg.training.batch_size, 3, cfg.model.enc_dim, dtype=dtype)
     
+
+
+    pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)    
 
     # Init running value arrays
     steps_per_epoch = len(monai_dict_test) // cfg.training.batch_size
@@ -128,11 +155,20 @@ def main(cfg: Config):
 
         t_mask_dl = asdlpack(batch['t_mask'])
         t_mask = jnp.from_dlpack(t_mask_dl)
+        
+        rel_time_dl = asdlpack(batch['rel_t'])
+        rel_time = jnp.from_dlpack(rel_time_dl)
+        
+        multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+
+        time_embed = build_rel_time_embeddings(rel_time, dim=(multiplier * cfg.model.enc_dim), dtype=dtype)
+
 
         loss, _probs = test_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
         probs[step, :, :] = np.array(_probs)
         golds[step, :] = batch['y'].numpy()
         censors[step, :] = batch['time_at_event'].numpy()
+        
 
     survival_metrics, risk_metrics = compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="test")
 
@@ -190,7 +226,7 @@ def test_step(
 
 
 def loss_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed):
-    n_year_logits = model(img0, img1, img2, t_mask, pos_embed, time_embed)
+    n_year_logits, _ = model(img0, img1, img2, t_mask, pos_embed, time_embed)
     survival_loss = optax.sigmoid_binary_cross_entropy(n_year_logits, y_seq) * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
     return survival_loss, jax.nn.sigmoid(n_year_logits)

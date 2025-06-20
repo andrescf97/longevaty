@@ -38,6 +38,7 @@ class Longivity(nnx.Module):
         bidirectional: bool = True,
         dropout_rate: float = 0.2,
         dtype: type = jnp.bfloat16,
+        use_attention: bool = False,
         use_cls: bool = False,
         use_mean_token: bool = False,
         guided_attention_heads: int = 12,
@@ -64,7 +65,9 @@ class Longivity(nnx.Module):
         
 
         hidden = enc_hidden_dim
-        
+
+        # Default: use only attention pooling
+
         self.aggregate_fn = lambda x, y, z: x
         if use_cls:
             hidden += enc_hidden_dim
@@ -76,6 +79,7 @@ class Longivity(nnx.Module):
             self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y, z], axis=-1)
 
         self.cls_token = nnx.Param(jnp.zeros((1, 1, hidden), dtype=dtype))
+
 
 
 
@@ -135,7 +139,7 @@ class Longivity(nnx.Module):
         v = tokens[:, 1:, :]
 
         attns, attn_weights = self.mha(q, k, v)
-        return attns.squeeze(), attn_weights.mean(1).squeeze()
+        return attns.squeeze(axis=1), attn_weights.mean(1).squeeze()
 
 
 

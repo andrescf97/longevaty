@@ -62,6 +62,7 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+        
 
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
 
@@ -113,8 +114,8 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_cls=cfg.attention.use_cls, 
-                      use_mean_token=cfg.attention.use_mean_token,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, use_cls=cfg.attention.use_cls, 
+                      use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       dtype=dtype, rngs=nnx.Rngs(0))
@@ -155,6 +156,7 @@ def main(cfg: Config):
     fine_tuned_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.finetuned_use_checkpoint, cfg.log.finetuned_ckpt_load), options=options)
     load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_load_loc, cfg.log.continue_use_checkpoint, cfg.log.continue_log_ckpt_load), options=options)
     best_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_best), options=options)
+    last_mngr = ocp.CheckpointManager(os.path.join(ckpt_root_dir, cfg.log.ckpt_last), options=options)
 
     start_epoch = 0
     if cfg.log.use_checkpoint:
@@ -292,7 +294,7 @@ def main(cfg: Config):
                 if cfg.training.freeze_encoder:
                     wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
                 else:
-                    wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
+                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
@@ -338,6 +340,7 @@ def main(cfg: Config):
             if survival_metrics['dev/c_index'] >= ckpt_metric:
                 best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
                 ckpt_metric = survival_metrics['dev/c_index']
+            last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
     return
 
 @jax.jit

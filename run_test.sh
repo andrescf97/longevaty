@@ -1,14 +1,14 @@
-export CUDA_VISIBLE_DEVICES='0'
+export CUDA_VISIBLE_DEVICES='1'
 
-uv run longitudinal.py \
+uv run test_longi.py \
     -cn longi.yaml \
-    attention.use_fusion_layer=True \
+    wandb.project_name=longi_test \
     attention.use_attention=True \
     attention.use_cls=True \
     attention.use_mean_token=True \
     training.freeze_encoder=True \
     training.freeze_mha=True \
-    training.batch_size=4 \
+    training.batch_size=1 \
     wandb.dry_run=False \
     training.to_checkpoint=True \
     training.num_workers=12 \

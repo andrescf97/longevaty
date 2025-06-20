@@ -98,6 +98,8 @@ class AttentionToken(Enum):
 @dataclass
 class AttentionConfig:
     heads: int = 12
+    use_fusion_layer: bool = False
+    use_attention: bool = True
     use_cls: bool = True
     use_mean_token: bool = True
 
@@ -107,6 +109,7 @@ class LoggingConfig:
     ckpt_load_loc: str = 'checkpoints'
     mae_ckpt_load: str = 'sybil-vit-last'
     mae_use_checkpoint: str = 'test'
+    use_test_checkpoint: str = 'test'
     ckpt_best: str = 'sybil-vit'
     ckpt_last: str = 'sybil-vit-last'
     ckpt_load: str = 'sybil-vit-last'
