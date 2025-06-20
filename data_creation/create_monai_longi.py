@@ -16,7 +16,7 @@ logger.setLevel(logging.INFO)
 from vital.config import load_config_store
 load_config_store()
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="mae.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="longi.yaml")
 def main(cfg):
     df = pd.read_csv("/pool/data/lung/NLST/real_nlst_series.csv")
     participants_df = pd.read_csv("/pool/data/lung/NLST/participant_d040722.csv")

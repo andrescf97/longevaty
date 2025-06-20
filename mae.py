@@ -115,6 +115,7 @@ def main(cfg: Config):
     if cfg.log.use_checkpoint:
         start_epoch, prev_state = load_checkpoint(load_mngr)
         state = prev_state if prev_state is not None else state
+        del prev_state
 
     # Training preparation
     key = jax.random.PRNGKey(cfg.training.seed)

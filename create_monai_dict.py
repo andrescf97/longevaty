@@ -3,6 +3,7 @@ import json
 import numpy as np
 import pickle
 from collections import Counter
+import itertools
 import os
 
 import hydra
@@ -15,32 +16,40 @@ logger.setLevel(logging.INFO)
 from vital.config import load_config_store
 load_config_store()
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="torch.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="longi.yaml")
 def main(cfg):
-    with open(cfg.data.dataset_file, "r") as fp:
-        ds = json.load(fp)
+    df = pd.read_csv("/pool/data/lung/NLST/real_nlst_series.csv")
+    participants_df = pd.read_csv("/pool/data/lung/NLST/participant_d040722.csv")
+    with open("/pool/data/lung/NLST/filtered_series.pkl", "rb") as fp:
+        filtered_series = pickle.load(fp)
 
-    with open(cfg.data.dataset_file_100, "r") as fp:
-        ds_100 = json.load(fp)
+    with open("files/Shetty_et_al(Google)_data_splits.p", "rb") as fp:
+        splits_file  = pickle.load(fp)
 
-    train_dataset = create_dataset(ds, "train", cfg.data.use_thinnest_cut,
-                                   cfg.data.data_root, cfg.data.corrupted_paths, cfg.data.google_splits_filename,
-                                   cfg.data.max_followup,
-                                   cfg.data.assign_splits)
-    dev_dataset = create_dataset(ds_100, "dev", cfg.data.use_thinnest_cut,
-                                   cfg.data.data_root, cfg.data.corrupted_paths, cfg.data.google_splits_filename,
-                                   cfg.data.max_followup,
-                                   cfg.data.assign_splits)
-    test_dataset = create_dataset(ds_100, "test", cfg.data.use_thinnest_cut,
-                                   cfg.data.data_root, cfg.data.corrupted_paths, cfg.data.google_splits_filename,
-                                   cfg.data.max_followup,
-                                   cfg.data.assign_splits)
+    split = {
+        'train': [],
+        'dev': [],
+        'test': []
+    }
+    for key, values in splits_file.items():
+        if splits_file[key]['split'] == "test":
+            split['test'].append(key)
+        if splits_file[key]['split'] == "dev":
+            split['dev'].append(key) 
 
-    # Print summary of the datasets
+    filtered_df = pd.DataFrame(filtered_series)
+    unique_pids = filtered_df[0].astype(str).unique()
+    split['train'] = list(set(unique_pids) - set(split['test']) - set(split['dev']))
+
+    train_ds  = create_dataset(split['train'], filtered_df, df, participants_df, cfg.data.max_followup, cfg.data.data_root)
+    dev_ds = create_dataset(split['dev'], filtered_df, df, participants_df, cfg.data.max_followup, cfg.data.data_root)
+    test_ds = create_dataset(split['test'], filtered_df, df, participants_df, cfg.data.max_followup, cfg.data.data_root)
+
+        # Print summary of the datasets
     def get_summary_statement(dataset, split_group):
         summary = "Contructed NLST CT Cancer Risk {} dataset with {} records, {} exams, {} patients, and the following class balance \n {}"
         class_balance = Counter([d["y"] for d in dataset])
-        exams = set([d["exam"] for d in dataset])
+        exams = set([d["series"] for d in dataset])
         patients = set([d["pid"] for d in dataset])
         statement = summary.format(
             split_group, len(dataset), len(exams), len(patients), class_balance
@@ -51,199 +60,79 @@ def main(cfg):
         statement
         return statement
 
-    logger.info(get_summary_statement(train_dataset, "train"))
-    logger.info(get_summary_statement(dev_dataset, "dev"))
-    logger.info(get_summary_statement(test_dataset, "test"))
+    logger.info(get_summary_statement(train_ds, "train"))
+    logger.info(get_summary_statement(dev_ds, "dev"))
+    logger.info(get_summary_statement(test_ds, "test"))
 
-    # Save the monai dict datasetraitrainnt
+    
     with open(cfg.data.monai_dict_train, "w") as fp:
-        json.dump(train_dataset, fp) 
+        json.dump(train_ds, fp, indent=4)
     with open(cfg.data.monai_dict_dev, "w") as fp:
-        json.dump(dev_dataset, fp) 
+        json.dump(dev_ds, fp, indent=4)
     with open(cfg.data.monai_dict_test, "w") as fp:
-        json.dump(test_dataset, fp) 
-
-
-def create_dataset(ds, split_group, use_only_thinnest_cut, 
-                   data_root, corrupted_paths, google_splits_filename, 
-                   max_followup,
-                   assign_splits=True):
-    with open(corrupted_paths, "rb") as fp:
-        corrupted_info = pickle.load(fp)
-    corrupted_paths = corrupted_info['paths']
-    corrupted_series = corrupted_info['series']
- 
-    with open(google_splits_filename, "rb") as fp:
-        goog_splits = pickle.load(fp)
-
+        json.dump(test_ds, fp, indent=4)
+         
+def create_dataset(split, filtered_df, df, participants_df, max_followup, data_root):
     dataset = []
-    for metadata in tqdm.tqdm(ds):
-        pid, split, exams, pt_metadata = ( metadata['pid'], metadata['split'], metadata['accessions'], metadata['pt_metadata'])
 
-        if not split == split_group:
-            logger.debug("Not in split group")
-            continue
+    for i, pid in tqdm.tqdm(enumerate(split), total=len(split)):
+        pid_df = filtered_df[filtered_df[0] == int(pid)]
+        pt_metadata = participants_df[participants_df.pid == int(pid)].to_dict(orient="records")[0]
 
-        for exam_dict in exams:
-            if use_only_thinnest_cut and split_group in ["train", "dev"]:
-                thinnest_series_id = get_thinnest_cut(exam_dict, data_root)
+        for index, row in pid_df.iterrows():
+            study = row[1]
+            _series = row[2]
+            screen_timepoint = df[df['seriesinstanceuid'] == _series]['study_yr'].iloc[0]
+            img = os.path.join(data_root, "images", str(pid), str(study), str(_series), f"{_series}.npy")
+            mask = os.path.join(data_root, "masks", str(pid), str(study), str(_series), f"{_series}.npy")
+            annotation = os.path.join(data_root, "annotations", str(pid), str(study), str(_series), f"{_series}.npy")
+            if not os.path.isfile(img):
+                continue
+            if not os.path.isfile(mask):
+                continue
+            if not os.path.exists(annotation):
+                annotation = None
 
-            elif split == "test" and assign_splits:
-                thinnest_series_id = get_thinnest_cut(exam_dict, data_root)
+            try:
+                y, y_seq, y_mask, time_at_event = get_label(pt_metadata, screen_timepoint, max_followup)
+            except ValueError:
+                pass
             
-            elif split == "test":
-                google_series = list(goog_splits[pid]['exams'])
-                nlst_series = list(exam_dict["image_series"].keys())
-                thinnest_series_id = [s for s in nlst_series if s in google_series]
-                assert len(thinnest_series_id) < 2
-                if len(thinnest_series_id) > 0:
-                    thinnest_series_id = thinnest_series_id[0]
-                elif len(thinnest_series_id) == 0:
-                    if assign_splits:
-                        thinnest_series_id = get_thinnest_cut(exam_dict)
-                    else:
-                        continue
-
-            for series_id, series_dict in exam_dict["image_series"].items():
-                if skip_sample(series_dict, pt_metadata, 2.5, max_followup):
-                    logger.debug("sample skipped")
-                    continue
-
-                if use_only_thinnest_cut and (not series_id == thinnest_series_id):
-                    logger.debug("Skipped. Series is not thinnest cut")
-                    continue
-
-                sample = get_volume_dict(
-                    series_id, series_dict, exam_dict, pt_metadata, pid,
-                    corrupted_series, corrupted_paths, max_followup,
-                    data_root
-                )
-                if sample is None:
-                    continue
-                
-                if len(sample) == 0:
-                    continue
-
-                dataset.append(sample)
+            if annotation is None:
+                sample = {
+                    "image": img,
+                    "mask": mask,
+                    "y": int(y),
+                    "time_at_event": time_at_event,
+                    "y_seq": y_seq,
+                    "y_mask": y_mask,
+                    "series": str(_series),
+                    "study": str(study),
+                    "screen_timepoint": int(screen_timepoint),
+                    "pid": str(pid),
+                    "institution": pt_metadata["cen"][0],
+                    "cancer_laterality": get_cancer_lobe(pt_metadata),
+                }
+            else:
+                sample = {
+                    "image": img,
+                    "mask": mask,
+                    "annotation": annotation,
+                    "y": int(y),
+                    "time_at_event": time_at_event,
+                    "y_seq": y_seq,
+                    "y_mask": y_mask,
+                    "series": str(_series),
+                    "study": str(study),
+                    "screen_timepoint": int(screen_timepoint),
+                    "pid": str(pid),
+                    "institution": pt_metadata["cen"][0],
+                    "cancer_laterality": get_cancer_lobe(pt_metadata),
+                }
+            dataset.append(sample)
 
     return dataset
 
-def get_thinnest_cut(exam_dict, data_root):
-    def check_annotation(pid, study_id, series_id):
-        return os.path.exists(os.path.join(data_root, "annotations_npy", pid, study_id, series_id, f"{series_id}.npy"))
-
-    # volume that is not thin cut might be the one annotated; or there are multiple volumes with same num slices, so:
-    # use annotated if available, otherwise use thinnest cut
-    series = list(exam_dict['image_series'].keys())
-    path = exam_dict['image_series'][ series[0] ]['paths'][0]
-    splitted_path = path.split("/")
-    study_id = splitted_path[-3]
-    pid = splitted_path[-4]
-
-    possibly_annotated_series = [
-        check_annotation(pid, study_id, series_id)
-        for series_id in list(exam_dict["image_series"].keys())
-    ]
-    series_lengths = [
-        len(exam_dict["image_series"][series_id]["paths"])
-        for series_id in exam_dict["image_series"].keys()
-    ]
-    thinnest_series_len = max(series_lengths)
-    thinnest_series_id = [
-        k
-        for k, v in exam_dict["image_series"].items()
-        if len(v["paths"]) == thinnest_series_len
-    ]
-    if any(possibly_annotated_series):
-        thinnest_series_id = list(exam_dict["image_series"].keys())[
-            possibly_annotated_series.index(1)
-        ]
-    else:
-        thinnest_series_id = thinnest_series_id[0]
-    return thinnest_series_id
-
-def get_volume_dict(
-    series_id, series_dict, exam_dict, pt_metadata, pid,
-    corrupted_series, corrupted_paths, max_followup,
-    data_root,
-):
-    img_paths = series_dict["paths"]
-    slice_locations = series_dict["img_position"]
-    series_data = series_dict["series_data"]
-    device = series_data["manufacturer"][0]
-    screen_timepoint = series_data["study_yr"][0]
-    assert screen_timepoint == exam_dict["screen_timepoint"]
-
-    # Possibly no use of this
-    if series_id in corrupted_series:
-        if any([path in corrupted_paths for path in img_paths]):
-            uncorrupted_imgs = np.where([path not in corrupted_paths for path in img_paths])[0]
-            img_paths = np.array(img_paths)[uncorrupted_imgs].tolist()
-            slice_locations = np.array(slice_locations)[uncorrupted_imgs].tolist()
-
-    y, y_seq, y_mask, time_at_event = get_label(pt_metadata, screen_timepoint, max_followup)
-
-    exam_int = f"{pid}{screen_timepoint}{series_id.split(".")[-1][-3:]}"
-
-    # Create paths for images, masks and annotations
-    img_path_split = img_paths[0].split("/")[:-1]
-    patient_id = img_path_split[-3]
-    study_id = img_path_split[-2]
-    ses_id = img_path_split[-1]
-
-    img_path = os.path.join(data_root, "images", patient_id, study_id, ses_id, f"{ses_id}.npy")
-    mask_path = os.path.join(data_root, "masks", patient_id, study_id, ses_id, f"{ses_id}.npy")
-    annotation_path = os.path.join(data_root, "annotations", patient_id, study_id, ses_id, f"{ses_id}.npy")
-    if not os.path.exists(annotation_path):
-        annotation_path = None
-
-    if not os.path.exists(img_path):
-        return None
-    
-    if not os.path.exists(mask_path):
-        return None
-
-    if annotation_path is None:
-        sample = {
-            "image": img_path,
-            "mask": mask_path,
-            "y": int(y),
-            "time_at_event": time_at_event,
-            "y_seq": y_seq,
-            "y_mask": y_mask,
-            "exam_str": "{}_{}".format(exam_dict["exam"], series_id),
-            "exam": exam_int,
-            "accession": exam_dict["accession_number"],
-            "series": series_id,
-            "study": series_data["studyuid"][0],
-            "screen_timepoint": screen_timepoint,
-            "pid": pid,
-            "device": device,
-            "institution": pt_metadata["cen"][0],
-            "cancer_laterality": get_cancer_lobe(pt_metadata),
-        }
-    else:
-        sample = {
-            "image": img_path,
-            "mask": mask_path,
-            "annotation": annotation_path,
-            "y": int(y),
-            "time_at_event": time_at_event,
-            "y_seq": y_seq,
-            "y_mask": y_mask,
-            "exam_str": "{}_{}".format(exam_dict["exam"], series_id),
-            "exam": exam_int,
-            "accession": exam_dict["accession_number"],
-            "series": series_id,
-            "study": series_data["studyuid"][0],
-            "screen_timepoint": screen_timepoint,
-            "pid": pid,
-            "device": device,
-            "institution": pt_metadata["cen"][0],
-            "cancer_laterality": get_cancer_lobe(pt_metadata),
-        }
-
-    return sample
 
 def skip_sample(series_dict, pt_metadata, slice_thickness_threshold, max_followup):
     def localizer_fn(series_dict):
@@ -294,17 +183,17 @@ def skip_sample(series_dict, pt_metadata, slice_thickness_threshold, max_followu
 
 
 def get_label(pt_metadata, screen_timepoint, max_followup):
-    days_since_rand = pt_metadata["scr_days{}".format(screen_timepoint)][0]
-    days_to_cancer_since_rand = pt_metadata["candx_days"][0]
+    days_since_rand = pt_metadata["scr_days{}".format(screen_timepoint)]
+    days_to_cancer_since_rand = pt_metadata["candx_days"]
     days_to_cancer = days_to_cancer_since_rand - days_since_rand
     years_to_cancer = (
         int(days_to_cancer // 365) if days_to_cancer_since_rand > -1 else 100
     )
-    days_to_last_followup = int(pt_metadata["fup_days"][0] - days_since_rand)
+    days_to_last_followup = int(pt_metadata["fup_days"] - days_since_rand)
     years_to_last_followup = days_to_last_followup // 365
     y = years_to_cancer < max_followup
     y_seq = [0] * max_followup
-    cancer_timepoint = pt_metadata["cancyr"][0]
+    cancer_timepoint = pt_metadata["cancyr"]
     if y:
         if years_to_cancer > -1:
             assert screen_timepoint <= cancer_timepoint
@@ -327,9 +216,9 @@ def get_cancer_side(pt_metadata):
     left_keys = ["loclup", "loclmsb", "locllow", "loclhil", "loclin"]
     other_keys = ["loccar", "locmed", "locoth", "locunk"]
 
-    right = any([pt_metadata[key][0] > 0 for key in right_keys])
-    left = any([pt_metadata[key][0] > 0 for key in left_keys])
-    other = any([pt_metadata[key][0] > 0 for key in other_keys])
+    right = any([pt_metadata[key] > 0 for key in right_keys])
+    left = any([pt_metadata[key] > 0 for key in left_keys])
+    other = any([pt_metadata[key] > 0 for key in other_keys])
 
     return [int(right), int(left), int(other)]
 
@@ -365,18 +254,10 @@ def get_cancer_lobe(pt_metadata):
     }
 
     for key, values in cancer_lobe_dict.items():
-        if pt_metadata[key][0] > 0:
+        if pt_metadata[key] > 0:
             return values
         else:
             return (4, False)
-
-
-def get_slice_thickness_class(thickness):
-    BINS = [1, 1.5, 2, 2.5]
-    for i, tau in enumerate(BINS):
-        if thickness <= tau:
-            return i
-    return 4
 
 
 if __name__ == "__main__":

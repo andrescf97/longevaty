@@ -163,14 +163,10 @@ class MaskPatchesd(transforms.MapTransform):
             data['has_annotation'] = False
 
         data.pop("mask")
-        data.pop("exam_str")
-        data.pop("exam")
-        data.pop("accession")
         data.pop("series")
         data.pop("study")
         data.pop("pid")
         data.pop("screen_timepoint")
-        data.pop("device")
         data.pop("institution")
         data.pop("cancer_laterality")
 
@@ -359,4 +355,15 @@ class Load(transforms.MapTransform):
             # Ensure channel dimension is added if missing
             if data[key].ndim == 3:
                 data[key] = np.expand_dims(data[key], axis=0)
+        return data
+
+class Repeat(transforms.MapTransform):
+    def __init__(self, keys):
+        super().__init__(keys)
+        self.keys = keys
+
+    def __call__(self, data):
+        for key in self.keys:
+            data[key] = data[key].repeat(3, 1, 1, 1) 
+
         return data
