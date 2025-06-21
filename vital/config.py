@@ -51,6 +51,7 @@ class TrainingConfig:
     shuffle: bool = True
     epochs: int = MISSING
     batch_size: int = MISSING
+    accumulation_steps: int = 1
     to_checkpoint: bool = MISSING
     sampler: str = "weighted"
     underrepresented_weight: float = 14

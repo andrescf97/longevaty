@@ -63,7 +63,6 @@ def main(cfg: Config):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
         
-
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
 
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -118,6 +117,7 @@ def main(cfg: Config):
                       use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
+                      pretrained_model_type=cfg.log.pretrained_model_type,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Optimizer                 
@@ -146,6 +146,7 @@ def main(cfg: Config):
         )
         nnx.replace_by_pure_dict(abs_state, param_partitions)
         tx = optax.multi_transform(partition_optimizer, abs_state)
+    tx = optax.MultiSteps(tx, every_k_schedule=cfg.training.accumulation_steps)
     optimizer = nnx.Optimizer(model=model, tx=tx)
 
     # Load checkpoint
@@ -209,21 +210,12 @@ def main(cfg: Config):
             nnx.replace_by_pure_dict(backbone_state, process_raw_dict(s['0']))
         else:
             raise ValueError(f"Unknown pretrained_model_type: {cfg.log.pretrained_model_type}")
-        
-        # _, backbone_state = nnx.split(backbone)
-        # s = mae_mngr.restore(mae_mngr.latest_step())  # Consider renaming to pretrained_mngr
-        # nnx.replace_by_pure_dict(backbone_state, process_raw_dict(s['0']))
-        
-        # Transfer weights based on model type
+
         if cfg.log.pretrained_model_type == "pretrained":
-            # Only transfer encoder from MAE
             state[0].encoder = backbone_state.encoder
         elif cfg.log.pretrained_model_type == "finetuned":
-            # You can choose what to transfer from LungeVity
             state[0].encoder = backbone_state.encoder
-            # Optionally transfer other components:
             state[0].mha = backbone_state.mha
-            # state[0].classifier = pretrained_state.classifier  # Full model transfer
         
         del s
         del backbone_state
@@ -249,6 +241,11 @@ def main(cfg: Config):
     dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     ckpt_metric = 0
+
+    if cfg.log.pretrained_model_type == "finetuned":
+        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+    else:
+        dim_multiplier = 1
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -278,9 +275,7 @@ def main(cfg: Config):
             rel_time_dl = asdlpack(batch['rel_t'])
             rel_time = jnp.from_dlpack(rel_time_dl)
 
-            multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
-
-            time_embed = build_rel_time_embeddings(rel_time, dim=(multiplier * cfg.model.enc_dim), dtype=dtype)
+            time_embed = build_rel_time_embeddings(rel_time, dim=(dim_multiplier * cfg.model.enc_dim), dtype=dtype)
             state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
 
             running_loss += loss
@@ -291,10 +286,10 @@ def main(cfg: Config):
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
                 jax.debug.print("Epoch {epoch}. Step {step}/{steps_per_epoch}: Loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
                 wandb.log({"train/loss_step": loss})
-                if cfg.training.freeze_encoder:
-                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
+                if cfg.training.freeze_encoder or cfg.training.freeze_mha:
+                    wandb.log({"lr": state[1].opt_state.inner_opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value.item()})
                 else:
-                    wandb.log({"lr": state[1].opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value})
+                    wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value.item()})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics

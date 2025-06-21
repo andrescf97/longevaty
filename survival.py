@@ -118,6 +118,7 @@ def main(cfg: Config):
         end_value=cfg.optimizer.end_lr
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
+    tx = optax.MultiSteps(tx, every_k_schedule=cfg.training.accumulation_steps)
     optimizer = nnx.Optimizer(model=model, tx=tx)
 
     # Load checkpoint
@@ -204,7 +205,7 @@ def main(cfg: Config):
                 wandb.log({"train/loss_step": loss})
                 wandb.log({"train/survival_loss": segregated_loss[0]})
                 wandb.log({"train/annotation_loss": segregated_loss[1]})
-                wandb.log({"lr": state[1].opt_state.hyperparams['learning_rate'].value})
+                wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")

@@ -24,6 +24,7 @@ class BidirectionlBlock(nnx.Module):
 class Longivity(nnx.Module):
     def __init__(
         self,
+        pretrained_model_type: str = "pretrained",
         longitundinal_model: str = "rnn",
         rnn_cell: str = "simple",
         patch_size: int = 16,
@@ -59,29 +60,27 @@ class Longivity(nnx.Module):
         )
 
         self.dropout = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.is_finetuned = False
         
-        self.mha = MultiHeadAttention(num_heads=guided_attention_heads, in_features=enc_hidden_dim, dtype=dtype, rngs=rngs,
-                                      dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=True)
-        
-
         hidden = enc_hidden_dim
+        if pretrained_model_type == "finetuned":
+            self.mha = MultiHeadAttention(num_heads=guided_attention_heads, in_features=enc_hidden_dim, dtype=dtype, rngs=rngs,
+                                        dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=True)
 
-        # Default: use only attention pooling
+            # Default: use only attention pooling
+            self.aggregate_fn = lambda x, y, z: x
+            if use_cls:
+                hidden += enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y], axis=-1)
+            if use_mean_token:
+                hidden += enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, z], axis=-1)
+            if use_cls and use_mean_token:
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y, z], axis=-1)
 
-        self.aggregate_fn = lambda x, y, z: x
-        if use_cls:
-            hidden += enc_hidden_dim
-            self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y], axis=-1)
-        if use_mean_token:
-            hidden += enc_hidden_dim
-            self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, z], axis=-1)
-        if use_cls and use_mean_token:
-            self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y, z], axis=-1)
+            self.is_finetuned = True
 
         self.cls_token = nnx.Param(jnp.zeros((1, 1, hidden), dtype=dtype))
-
-
-
 
         if longitundinal_model != "rnn":
             self.transformer = [
@@ -113,7 +112,6 @@ class Longivity(nnx.Module):
             )
             self.is_transformer = False
 
-
         if fusion_layer:
             self.classifier = nnx.Sequential(*[
                 FusionLayerWithResidual(input_dim=hidden, output_dim=hidden_dim, hidden_dim=1024, dropout_rate=dropout_rate, dtype=dtype, rngs=rngs),
@@ -126,9 +124,6 @@ class Longivity(nnx.Module):
                 nnx.Dropout(rate=dropout_rate, rngs=rngs),
                 CumProbLayer(hidden_dim, max_followup, rngs=rngs, dtype=dtype)
             ])
-        
-        
-        
 
     def attention_pooling(
             self,
@@ -142,30 +137,37 @@ class Longivity(nnx.Module):
         return attns.squeeze(axis=1), attn_weights.mean(1).squeeze()
 
 
-
     def __call__(self, img0, img1, img2, t_mask, pos_embed, tim_embed):
         emb0 = self.encoder(img0, pos_embed)
         emb1 = self.encoder(img1, pos_embed)
         emb2 = self.encoder(img2, pos_embed)
         
-        attn_pooled, attn_weights = self.attention_pooling(emb0)
-        attn_pooled1, attn_weights1 = self.attention_pooling(emb1)
-        attn_pooled2, attn_weights2 = self.attention_pooling(emb2)
-        
-        mean_pooled = emb0[:, 1:, :].mean(axis=1)
-        mean_pooled1 = emb1[:, 1:, :].mean(axis=1)
-        mean_pooled2 = emb2[:, 1:, :].mean(axis=1)
-        
-        cls = emb0[:, 0, :]
-        cls1 = emb1[:, 0, :]
-        cls2 = emb2[:, 0, :]
+        if self.is_finetuned:
+            attn_pooled, attn_weights = self.attention_pooling(emb0)
+            attn_pooled1, attn_weights1 = self.attention_pooling(emb1)
+            attn_pooled2, attn_weights2 = self.attention_pooling(emb2)
+            
+            mean_pooled = emb0[:, 1:, :].mean(axis=1)
+            mean_pooled1 = emb1[:, 1:, :].mean(axis=1)
+            mean_pooled2 = emb2[:, 1:, :].mean(axis=1)
+            
+            cls = emb0[:, 0, :]
+            cls1 = emb1[:, 0, :]
+            cls2 = emb2[:, 0, :]
 
-        pooled_output = self.aggregate_fn(attn_pooled, cls, mean_pooled)
-        pooled_output1 = self.aggregate_fn(attn_pooled1, cls1, mean_pooled1)
-        pooled_output2 = self.aggregate_fn(attn_pooled2, cls2, mean_pooled2)
+            pooled_output = self.aggregate_fn(attn_pooled, cls, mean_pooled)
+            pooled_output1 = self.aggregate_fn(attn_pooled1, cls1, mean_pooled1)
+            pooled_output2 = self.aggregate_fn(attn_pooled2, cls2, mean_pooled2)
+
+            attn_weights_batch = jnp.stack((attn_weights, attn_weights1, attn_weights2), axis=1)
+        else:
+            pooled_output = emb0[:, 0, :]
+            pooled_output1 = emb1[:, 0, :]
+            pooled_output2 = emb2[:, 0, :]
+
+            attn_weights_batch = None
 
         batch = jnp.stack((pooled_output, pooled_output1, pooled_output2), axis=1)
-        attn_weights_batch = jnp.stack((attn_weights, attn_weights1, attn_weights2), axis=1)
 
         if self.is_transformer:
             batch = self.time_embedding(tim_embed) + batch

@@ -18,10 +18,10 @@ data:
     use_thinnest_cut: True
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
-    data_root: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/"
-    monai_dict_train: "/mnt/nlst_data/npy/train_vital_25.json"
-    monai_dict_dev: "/mnt/nlst_data/npy/dev_vital_25.json"
-    monai_dict_test: "/mnt/nlst_data/npy/test_vital_25.json"
+    data_root: "/pool/data/lung/NLST/npy"
+    monai_dict_train: "/pool/data/lung/NLST/json/train_our.json"
+    monai_dict_dev: "/pool/data/lung/NLST/json/dev_our.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/test_our.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -34,11 +34,15 @@ training:
     dev_num_workers: 6
     test_num_workers: 1
     prefetch_factor: 8
+    dev_prefetch_factor: 4
     shuffle: True
     epochs: 50
     batch_size: 4
+    accumulation_steps: 8
     to_checkpoint: False
     underrepresented_weight: 14
+    sampler: "stratified"
+    minority_samples_per_batch: 1
 
 optimizer:
     lr_scheduler: onecycle
@@ -57,13 +61,13 @@ loss:
     aw: 1
 
 log:
-    ckpt_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints/survival"
-    ckpt_load_loc: "/mnt/external_ssd/chev/lung/vit-jax/checkpoints"
+    ckpt_loc: "/pool/data/lung/checkpoints/lungevity"
+    ckpt_load_loc: "/pool/data/lung/checkpoints/mae/"
     mae_ckpt_load: 'vit-last'
-    mae_use_checkpoint: 'astral-plasma-71'
+    mae_use_checkpoint: 'dazzling-oath-201'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
-    ckpt_load: 'vit-last'
+    ckpt_load: 'vit'
     use_checkpoint: 'test'
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
@@ -72,11 +76,11 @@ log:
 
 model:
     patch_size: 16
-    enc_dim: 768
-    dec_dim: 768
+    enc_dim: 1296
+    dec_dim: 648
     dropout_rate: 0.1
-    enc_heads: 12
-    enc_depth: 12
+    enc_heads: 16
+    enc_depth: 32
     dec_heads: 6
     dec_depth: 4
     in_chans: 1
@@ -88,10 +92,6 @@ transform:
         LoadImaged:
             keys: ['image', 'mask', 'annotation']
             allow_missing_keys: True
-        ToDeviced:
-            keys: ['image', 'annotation']
-            allow_missing_keys: True 
-            device: "cuda"
         EnsureChannelFirstd:
             keys: ['image', 'mask', 'annotation']
             allow_missing_keys: True
@@ -100,6 +100,10 @@ transform:
             mode: ["trilinear", "nearest", "nearest"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image', 'annotation']
+            allow_missing_keys: True 
+            device: "cuda"
         RandFlipd_1:
             keys: ['image', 'mask', 'annotation']
             allow_missing_keys: True
@@ -142,12 +146,6 @@ transform:
             prob: 0.33
             mean: 0
             std: 0.1
-        RandCoarseDropoutd:
-            keys: ['image']
-            prob: 0.33
-            holes: 60
-            spatial_size: 16
-            fill_value: -1
         MaskPatchesd_our:
             keys: ['mask']
             patch_size: [16, 16, 16]
@@ -172,6 +170,10 @@ transform:
             mode: ["trilinear", "nearest", "nearest"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
+        ToDeviced:
+            keys: ['image', 'annotation']
+            allow_missing_keys: True 
+            device: "cuda"
         MaskPatchesd_our:
             keys: ['mask']
             patch_size: [16, 16, 16]

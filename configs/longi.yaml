@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 wandb:
-    dry_run: True
+    dry_run: False
     project_name: "longi-jax"
     task: "survival"
     entity: "mri-ai-lab"
@@ -19,9 +19,9 @@ data:
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
     data_root: "/pool/data/lung/NLST/npy/"
-    monai_dict_train: "/pool/users/braj/mae-jax/data/train_longi.json"
-    monai_dict_dev: "/pool/users/braj/mae-jax/data/dev_longi.json"
-    monai_dict_test: "/pool/users/braj/mae-jax/data/test_longi.json"
+    monai_dict_train: "/pool/data/lung/NLST/json/train_longi.json"
+    monai_dict_dev: "/pool/data/lung/NLST/json/dev_longi.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/test_longi.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -36,13 +36,14 @@ training:
     prefetch_factor: 10
     dev_prefetch_factor: 4
     shuffle: True
-    epochs: 50
+    epochs: 1000
     batch_size: 4
+    accumulation_steps: 1
     to_checkpoint: False
     sampler: "stratified"
     underrepresented_weight: 14
     minority_samples_per_batch: 1
-    freeze_encoder: False
+    freeze_encoder: True
     freeze_mha: True
 
 optimizer:
@@ -64,14 +65,14 @@ loss:
     aw: 1
 
 log:
-    use_checkpoint: 'smooth-rain-220'
-    ckpt_loc: "/pool/users/braj/mae-jax/checkpoints/longivity/"
-    ckpt_load_loc: "/pool/users/braj/mae-jax/checkpoints/lungevity/"
+    use_checkpoint: False
+    ckpt_loc: "/pool/data/lung/checkpoints/mae/"
+    ckpt_load_loc: "/pool/data/lung/checkpoints/mae/"
     mae_ckpt_load: 'vit-last'
-    mae_use_checkpoint: 'test'
+    mae_use_checkpoint: 'pretty-thunder-81'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
-    ckpt_load: 'vit'
+    ckpt_load: 'vit-last'
     checkpoint_at_epoch: 2
     log_at_these_steps: 500
     log_scans_at_these_epochs: 2
@@ -80,7 +81,7 @@ log:
     continue_use_checkpoint: 'test'
     continue_log_ckpt_load: 'test'
     num_predictions: 20
-    pretrained_model_type: 'finetuned'
+    pretrained_model_type: 'pretrained'
 
 model:
     patch_size: 16
@@ -137,25 +138,25 @@ transform:
             range_y: 0.2
             range_z: 0.2
             mode: ['bilinear', 'bilinear', 'bilinear']
-        # RandHistogramShiftd:
-        #     keys: ['image0', 'image1', 'image2']
-        #     prob: 0.33
-        #     num_control_points: [5,8]
-        # RandGaussianSharpend:
-        #     keys: ['image0', 'image1', 'image2']
-        #     sigma1_x: [0.1,0.5]
-        #     sigma1_y: [0.1,0.5]
-        #     sigma1_z: [0.1,0.5]
-        #     sigma2_x: 0.3
-        #     sigma2_y: 0.3
-        #     sigma2_z: 0.3
-        #     prob: 0.33
-        #     alpha: [1.5, 10]
-        # RandGaussianNoised:
-        #     keys: ['image0', 'image1', 'image2']
-        #     prob: 0.33
-        #     mean: 0
-        #     std: 0.1
+        RandHistogramShiftd:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            num_control_points: [5,8]
+        RandGaussianSharpend:
+            keys: ['image0', 'image1', 'image2']
+            sigma1_x: [0.1,0.5]
+            sigma1_y: [0.1,0.5]
+            sigma1_z: [0.1,0.5]
+            sigma2_x: 0.3
+            sigma2_y: 0.3
+            sigma2_z: 0.3
+            prob: 0.33
+            alpha: [1.5, 10]
+        RandGaussianNoised:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            mean: 0
+            std: 0.1
         PatchifyLongi_our:
             keys: ['image0']
             patch_size: [16, 16, 16]
