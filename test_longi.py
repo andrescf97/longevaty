@@ -1,10 +1,10 @@
-
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
 os.environ['XLA_FLAGS'] = (
-    # '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'  
 
 import hydra
 from omegaconf import OmegaConf
@@ -79,6 +79,7 @@ def main(cfg: Config):
                       use_mean_token=cfg.attention.use_mean_token,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
+                      pretrained_model_type=cfg.log.pretrained_model_type,
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Load checkpoint
@@ -137,6 +138,10 @@ def main(cfg: Config):
     probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
     golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
     censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
+    if cfg.log.pretrained_model_type == "finetuned":
+        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+    else:
+        dim_multiplier = 1
     for step, batch in tqdm(enumerate(test_loader), total=steps_per_epoch):
         images_dl = asdlpack(batch['image0'])
         image0 = jnp.from_dlpack(images_dl)
@@ -159,10 +164,7 @@ def main(cfg: Config):
         rel_time_dl = asdlpack(batch['rel_t'])
         rel_time = jnp.from_dlpack(rel_time_dl)
         
-        multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
-
-        time_embed = build_rel_time_embeddings(rel_time, dim=(multiplier * cfg.model.enc_dim), dtype=dtype)
-
+        time_embed = build_rel_time_embeddings(rel_time, dim=(dim_multiplier * cfg.model.enc_dim), dtype=dtype)
 
         loss, _probs = test_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
         probs[step, :, :] = np.array(_probs)

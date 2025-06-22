@@ -37,6 +37,10 @@ import optax
 import orbax.checkpoint as ocp
 from dlpack import asdlpack
 
+import resource
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
+
 load_config_store()
 
 @hydra.main(config_path="./configs", config_name='survival.yaml', version_base=None)
