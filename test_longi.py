@@ -43,7 +43,7 @@ rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
 load_config_store()
-@hydra.main(config_path="./configs", config_name='longi.yaml', version_base=None)
+@hydra.main(config_path="./configs", config_name='longi-finetune.yaml', version_base=None)
 def main(cfg: Config):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
@@ -75,8 +75,8 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_cls=cfg.attention.use_cls, 
-                      use_mean_token=cfg.attention.use_mean_token,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, use_cls=cfg.attention.use_cls, 
+                      use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       pretrained_model_type=cfg.log.pretrained_model_type,
@@ -86,39 +86,13 @@ def main(cfg: Config):
     (graphdef, state) = nnx.split(model)
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
-    checkpoint_path = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load)
+    load_mngr = ocp.CheckpointManager(os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint, cfg.log.ckpt_load), options=options)
 
-    print(f"Looking for checkpoint at: {checkpoint_path}")
+    ckpt_state = load_mngr.restore(load_mngr.latest_step())
+    nnx.replace_by_pure_dict(state, process_raw_dict(ckpt_state['0']))
 
-    try:
-        # Check if checkpoint directory exists
-        if not os.path.exists(checkpoint_path):
-            print(f"Checkpoint directory does not exist: {checkpoint_path}")
-            print("Using random weights for testing...")
-            load_mngr = None
-        else:
-            load_mngr = ocp.CheckpointManager(checkpoint_path, options=options)
-            
-            # Check if there are any saved steps
-            latest_step = load_mngr.latest_step()
-            if latest_step is None:
-                print(f"No checkpoint steps found in: {checkpoint_path}")
-                print("Using random weights for testing...")
-                load_mngr = None
-            else:
-                print(f"Found checkpoint at step: {latest_step}")
-                ckpt_state = load_mngr.restore(latest_step)
-                nnx.replace_by_pure_dict(state, process_raw_dict(ckpt_state['0']))
-                print("Successfully loaded checkpoint weights")
-                
-                del ckpt_state
-                del load_mngr
-
-    except Exception as e:
-        print(f"Error loading checkpoint: {e}")
-        print("Using random weights for testing...")
-        load_mngr = None
-
+    del ckpt_state
+    del load_mngr
 
     # Position embeddings
     img_size = cfg.data.img_size
@@ -128,8 +102,6 @@ def main(cfg: Config):
         img_size[2] / cfg.model.patch_size
     ]
     
-
-
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)    
 
     # Init running value arrays
