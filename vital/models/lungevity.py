@@ -143,7 +143,7 @@ class LungeVity(nnx.Module):
         v = tokens[:, 1:, :]
 
         attns, attn_weights = self.mha(q, k, v)
-        return attns.squeeze(), attn_weights.mean(1).squeeze()
+        return attns.squeeze(axis=1), attn_weights.mean(1).squeeze()
 
     def __call__(
         self,

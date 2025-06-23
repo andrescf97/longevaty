@@ -1,24 +1,26 @@
 from vital.models.blocks import MAEVitEncoder, TransformerEncoder
 from flax import nnx
+from flax.nnx.nn.recurrent import RNN, Bidirectional
 import jax
 import jax.numpy as jnp
-from vital.models.rnn import RNN, Bidirectional
 from vital.models.lungevity import CumProbLayer
 from vital.models.attention import MultiHeadAttention
 
 
 class BidirectionlBlock(nnx.Module):
-    def __init__(self, cell, input_dim: int, hidden_dim: int, dtype: type = jnp.bfloat16, rngs: nnx.Rngs = nnx.Rngs(0)):
+    def __init__(self, cell, input_dim: int, hidden_dim: int, dropout_rate: float = 0.1, dtype: type = jnp.bfloat16, rngs: nnx.Rngs = nnx.Rngs(0)):
         self.bidirectional = Bidirectional(
                     RNN(cell(input_dim, hidden_dim, dtype=dtype, rngs=rngs), unroll=3),
                     RNN(cell(input_dim, hidden_dim, dtype=dtype, rngs=rngs), unroll=3),
                 )
         self.linear = nnx.Linear(hidden_dim * 2, hidden_dim, dtype=dtype, rngs=rngs)
+        self.dropout =  nnx.Dropout(dropout_rate, rngs=rngs),
     
     def __call__(self, inputs, masks, **kwargs):
         outputs = self.bidirectional(inputs, masks, **kwargs)
         outputs = self.linear(outputs)
         outputs = nnx.gelu(outputs)
+        outputs = self.dropout(outputs)
         return outputs
 
 class Longivity(nnx.Module):
@@ -102,7 +104,7 @@ class Longivity(nnx.Module):
                 nnx.Linear(hidden, hidden, rngs=rngs, dtype=dtype),
             ])
         else:
-            self.init_layer, self.layers = make_rnn_layers(
+            self.layers = make_rnn_layers(
                 cell=rnn_cell,
                 enc_hidden_dim=hidden,
                 blocks=blocks,
@@ -181,11 +183,12 @@ class Longivity(nnx.Module):
             final_state = x[:, 0, :]
 
         else:
-            output = self.init_layer(batch, t_mask)
+            x = batch
+            seq_lens = jnp.sum(t_mask, axis=1)
             for layer in self.layers:
-                output = layer(output, t_mask)
+                x = layer(x, seq_lengths=seq_lens)
 
-            final_state = output[:, -1, :] 
+            final_state = x[:, -1, :] 
 
         op = self.classifier(final_state)
         return op, attn_weights_batch
@@ -209,19 +212,16 @@ def make_rnn_layers(
             cell = nnx.nn.recurrent.SimpleCell
 
     if bidirectional:
-        init_layer = BidirectionlBlock(cell=cell, input_dim=enc_hidden_dim, hidden_dim=enc_hidden_dim, dtype=dtype, rngs=rngs)
         layers = [
             BidirectionlBlock(cell=cell, input_dim=enc_hidden_dim, hidden_dim=enc_hidden_dim, dtype=dtype, rngs=rngs)
-            for _ in range(blocks - 1)
+            for _ in range(blocks)
         ]
     else:
-        init_layer = RNN(cell(enc_hidden_dim, enc_hidden_dim, dtype=dtype, rngs=rngs), unroll=3)
-       
         layers = [
             RNN(cell(enc_hidden_dim, enc_hidden_dim, dtype=dtype, rngs=rngs), unroll=3) 
-            for _ in range(blocks - 1)
+            for _ in range(blocks)
         ]
-    return init_layer, layers
+    return layers
 
 
 class ResidualBlock(nnx.Module):

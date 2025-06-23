@@ -1,4 +1,3 @@
-
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
 os.environ['XLA_FLAGS'] = (
@@ -12,6 +11,7 @@ from omegaconf import OmegaConf
 import wandb
 import json
 import math
+from functools import partial
 
 from vital.config import Config, load_config_store
 from vital.sampler import DeterministicImbalancedSampler
@@ -129,25 +129,15 @@ def main(cfg: Config):
         end_value=cfg.optimizer.end_lr
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
-    if cfg.training.freeze_encoder or cfg.training.freeze_mha:
-        partition_optimizer = {
-            "trainable": tx,
-            "frozen": optax.set_to_zero()
-        }
-        abs_state = nnx.eval_shape(lambda: nnx.state(model, nnx.Param))
-        
-        def should_freeze(path):
-            return (cfg.training.freeze_encoder and 'encoder' in path) or \
-                (cfg.training.freeze_mha and 'mha' in path)
-        
-        param_partitions = flax.traverse_util.path_aware_map(
-            lambda path, v: 'frozen' if should_freeze(path) else 'trainable', 
-            abs_state.raw_mapping
-        )
-        nnx.replace_by_pure_dict(abs_state, param_partitions)
-        tx = optax.multi_transform(partition_optimizer, abs_state)
     tx = optax.MultiSteps(tx, every_k_schedule=cfg.training.accumulation_steps)
-    optimizer = nnx.Optimizer(model=model, tx=tx)
+    optim_filters = [nnx.Nothing()]
+    if cfg.training.freeze_encoder:
+        optim_filters.append(nnx.PathContains('encoder'))
+    if cfg.training.freeze_mha:
+        optim_filters.append(nnx.PathContains('mha'))
+    trainable_params = nnx.All(nnx.Param, nnx.Not(optim_filters))
+    optimizer = nnx.Optimizer(model=model, tx=tx, wrt=trainable_params)
+    diff_state = nnx.DiffState(0, trainable_params)
 
     # Load checkpoint
     (graphdef, state) = nnx.split((model, optimizer))
@@ -246,6 +236,7 @@ def main(cfg: Config):
         dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
     else:
         dim_multiplier = 1
+
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -276,7 +267,7 @@ def main(cfg: Config):
             rel_time = jnp.from_dlpack(rel_time_dl)
 
             time_embed = build_rel_time_embeddings(rel_time, dim=(dim_multiplier * cfg.model.enc_dim), dtype=dtype)
-            state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
+            state, loss, _probs = train_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed, diff_state = diff_state)
 
             running_loss += loss
             probs[step, :, :] = np.array(_probs)
@@ -286,10 +277,7 @@ def main(cfg: Config):
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
                 jax.debug.print("Epoch {epoch}. Step {step}/{steps_per_epoch}: Loss {loss}", epoch=epoch, step=step, steps_per_epoch=steps_per_epoch, loss=loss)
                 wandb.log({"train/loss_step": loss})
-                if cfg.training.freeze_encoder or cfg.training.freeze_mha:
-                    wandb.log({"lr": state[1].opt_state.inner_opt_state.inner_states.trainable.inner_state.hyperparams['learning_rate'].value.item()})
-                else:
-                    wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value.item()})
+                wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value.item()})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
@@ -338,7 +326,7 @@ def main(cfg: Config):
             last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
     return
 
-@jax.jit
+@partial(jax.jit, static_argnames=('diff_state'))
 def train_step(
         graphdef: nnx.GraphDef,
         state: nnx.State,
@@ -349,11 +337,12 @@ def train_step(
         y_mask: jax.Array,
         t_mask: jax.Array,
         pos_embed: jax.Array,
-        time_embed: jax.Array
+        time_embed: jax.Array,
+        diff_state: nnx.DiffState
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
     model.train()
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=diff_state)
     (loss, probs), grads = grad_fn(model, img0, img1, img2, y_seq, y_mask, t_mask, pos_embed, time_embed)
     optimizer.update(grads)
     state = nnx.state((model, optimizer))
