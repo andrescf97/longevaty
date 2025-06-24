@@ -122,11 +122,13 @@ def main(cfg: Config):
                       dtype=dtype, rngs=nnx.Rngs(0))
 
     # Optimizer                 
+    steps_per_epoch = len(sampler) // cfg.training.batch_size
+    dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
     scheduler = optax.schedules.warmup_cosine_decay_schedule(
         init_value=cfg.optimizer.init_lr,
         peak_value=cfg.optimizer.peak_lr,
-        warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
-        decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        warmup_steps=cfg.optimizer.warmup_epochs * (steps_per_epoch // cfg.training.accumulation_steps),
+        decay_steps=cfg.training.epochs * steps_per_epoch,
         end_value=cfg.optimizer.end_lr
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
@@ -238,6 +240,7 @@ def main(cfg: Config):
     else:
         dim_multiplier = 1
 
+    save_step = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -317,8 +320,9 @@ def main(cfg: Config):
 
                 if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
                     if survival_metrics['dev/c_index'] >= ckpt_metric:
-                        best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                        best_mngr.save(step=save_step, args=ocp.args.StandardSave(state))
                         ckpt_metric = survival_metrics['dev/c_index']
+                        save_step += 1
                     last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
