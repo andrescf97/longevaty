@@ -319,17 +319,20 @@ def main(cfg: Config):
                 log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
 
                 if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
-                    if survival_metrics['dev/c_index'] >= ckpt_metric:
+                    sum = survival_metrics['dev/1_year_prauc'] + survival_metrics['dev/2_year_prauc'] + survival_metrics['dev/3_year_prauc'] \
+                        + survival_metrics['dev/4_year_prauc'] + survival_metrics['dev/5_year_prauc'] + survival_metrics['dev/6_year_prauc'] 
+                    if sum >= ckpt_metric:
+                        best_mngr.wait_until_finished()   
                         best_mngr.save(step=save_step, args=ocp.args.StandardSave(state))
-                        ckpt_metric = survival_metrics['dev/c_index']
+                        ckpt_metric = sum
                         save_step += 1
-                    last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
+    best_mngr.wait_until_finished()   
     return
 
 @partial(jax.jit, static_argnames=('diff_state'))
