@@ -14,10 +14,10 @@ class BidirectionlBlock(nnx.Module):
                     RNN(cell(input_dim, hidden_dim, dtype=dtype, rngs=rngs), unroll=3),
                 )
         self.linear = nnx.Linear(hidden_dim * 2, hidden_dim, dtype=dtype, rngs=rngs)
-        self.dropout =  nnx.Dropout(dropout_rate, rngs=rngs),
+        self.dropout =  nnx.Dropout(rate=dropout_rate, rngs=rngs)
     
-    def __call__(self, inputs, masks, **kwargs):
-        outputs = self.bidirectional(inputs, masks, **kwargs)
+    def __call__(self, inputs, **kwargs):
+        outputs = self.bidirectional(inputs, **kwargs)
         outputs = self.linear(outputs)
         outputs = nnx.gelu(outputs)
         outputs = self.dropout(outputs)
@@ -44,6 +44,7 @@ class Longivity(nnx.Module):
         use_attention: bool = False,
         use_cls: bool = False,
         use_mean_token: bool = False,
+        use_attention_pooling: bool = True,
         guided_attention_heads: int = 12,
         fusion_layer: bool = False,
         *,
@@ -69,16 +70,28 @@ class Longivity(nnx.Module):
             self.mha = MultiHeadAttention(num_heads=guided_attention_heads, in_features=enc_hidden_dim, dtype=dtype, rngs=rngs,
                                         dropout_rate=dropout_rate, broadcast_dropout=False, decode=False, deterministic=True)
 
-            # Default: use only attention pooling
-            self.aggregate_fn = lambda x, y, z: x
-            if use_cls:
-                hidden += enc_hidden_dim
-                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y], axis=-1)
-            if use_mean_token:
-                hidden += enc_hidden_dim
-                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, z], axis=-1)
-            if use_cls and use_mean_token:
+            if use_cls and use_mean_token and use_attention_pooling:
+                hidden = 3 * enc_hidden_dim
                 self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y, z], axis=-1)
+            elif use_cls and use_mean_token:
+                hidden = 2 * enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y], axis=-1)
+            elif use_cls and use_attention_pooling:
+                hidden = 2 * enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, z], axis=-1)
+            elif use_mean_token and use_attention_pooling:
+                hidden = 2 * enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: jnp.concatenate([x, y], axis=-1)
+            elif use_cls:
+                hidden = enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: x
+            elif use_mean_token:
+                hidden = enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: y
+            elif use_attention_pooling:
+                hidden = enc_hidden_dim
+                self.aggregate_fn = lambda x, y, z: z
+
 
             self.is_finetuned = True
 

@@ -43,6 +43,7 @@ training:
     underrepresented_weight: 14
     sampler: "stratified"
     minority_samples_per_batch: 1
+    freeze_encoder: True
 
 optimizer:
     lr_scheduler: onecycle
@@ -85,7 +86,19 @@ model:
     dec_depth: 4
     in_chans: 1
     rng: 24
-    fusion_layer: True
+    fusion_layer: False
+
+# model:
+#     patch_size: 16
+#     enc_dim: 768
+#     dec_dim: 384
+#     dropout_rate: 0.1
+#     enc_heads: 12
+#     enc_depth: 12
+#     dec_heads: 6
+#     dec_depth: 4
+#     in_chans: 1
+#     rng: 24
 
 transform:
     train_tf:
@@ -181,6 +194,34 @@ transform:
             use_annotations: True
         ToTensord:
             keys: ['image', 'annotation', 'y_mask', 'y_seq']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+
+    test_tf:
+        LoadImaged:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image', 'mask', 'annotation']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image', 'mask', 'annotation']
+            mode: ["trilinear", "nearest", "nearest"]
+            spatial_size: [160, 240, 128]
+            allow_missing_keys: True
+        ToDeviced:
+            keys: ['image']
+            allow_missing_keys: True 
+            device: "cuda"
+        MaskPatchesNoPopd_our:
+            keys: ['mask']
+            patch_size: [16, 16, 16]
+            hull_only: False
+            use_annotations: True
+        ToTensord:
+            keys: ['image']
             allow_missing_keys: True
             track_meta: False
             device: "cuda"

@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 import wandb
 import json
-import math
+from functools import partial
 
 from vital.config import Config, load_config_store
 from vital.sampler import DeterministicImbalancedSampler
@@ -123,7 +123,14 @@ def main(cfg: Config):
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
     tx = optax.MultiSteps(tx, every_k_schedule=cfg.training.accumulation_steps)
-    optimizer = nnx.Optimizer(model=model, tx=tx)
+    optim_filters = [nnx.Nothing()]
+    if cfg.training.freeze_encoder:
+        optim_filters.append(nnx.PathContains('encoder'))
+    if cfg.training.freeze_mha:
+        optim_filters.append(nnx.PathContains('mha'))
+    trainable_params = nnx.All(nnx.Param, nnx.Not(optim_filters))
+    optimizer = nnx.Optimizer(model=model, tx=tx, wrt=trainable_params)
+    diff_state = nnx.DiffState(0, trainable_params)
 
     # Load checkpoint
     (graphdef, state) = nnx.split((model, optimizer))
@@ -195,7 +202,7 @@ def main(cfg: Config):
             y_mask_dl = asdlpack(batch['y_mask'])
             y_mask = jnp.from_dlpack(y_mask_dl)
 
-            state, loss, segregated_loss, _probs = train_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw))
+            state, loss, segregated_loss, _probs = train_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw), diff_state=diff_state)
 
             running_loss += loss
             running_survival_loss += segregated_loss[0]
@@ -211,47 +218,48 @@ def main(cfg: Config):
                 wandb.log({"train/annotation_loss": segregated_loss[1]})
                 wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value})
 
+                # Dev
+                running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
+                dev_probs.fill(0)
+                dev_golds.fill(0)
+                dev_censors.fill(0)
+                for step, batch in enumerate(dev_loader):
+                    images_dl = asdlpack(batch['image'])
+                    images = jnp.from_dlpack(images_dl)
+
+                    annotations_dl = asdlpack(batch['annotation'])
+                    annotations = jnp.from_dlpack(annotations_dl)
+
+                    y_seq_dl = asdlpack(batch['y_seq'])
+                    y_seq = jnp.from_dlpack(y_seq_dl)
+
+                    y_mask_dl = asdlpack(batch['y_mask'])
+                    y_mask = jnp.from_dlpack(y_mask_dl)
+                    loss, segregated_loss, _probs = dev_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw))
+
+                    running_loss += loss
+                    running_survival_loss += segregated_loss[0]
+                    running_annotation_loss += segregated_loss[1]
+                    dev_probs[step, :, :] = np.array(_probs)
+                    dev_golds[step, :] = batch['y'].numpy()
+                    dev_censors[step, :] = batch['time_at_event'].numpy()
+
+                wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
+                survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+                log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
+
+                if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
+                    if survival_metrics['dev/c_index'] >= ckpt_metric:
+                        best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                        ckpt_metric = survival_metrics['dev/c_index']
+
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
-        # Dev
-        running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
-        dev_probs.fill(0)
-        dev_golds.fill(0)
-        dev_censors.fill(0)
-        for step, batch in enumerate(dev_loader):
-            images_dl = asdlpack(batch['image'])
-            images = jnp.from_dlpack(images_dl)
-
-            annotations_dl = asdlpack(batch['annotation'])
-            annotations = jnp.from_dlpack(annotations_dl)
-
-            y_seq_dl = asdlpack(batch['y_seq'])
-            y_seq = jnp.from_dlpack(y_seq_dl)
-
-            y_mask_dl = asdlpack(batch['y_mask'])
-            y_mask = jnp.from_dlpack(y_mask_dl)
-            loss, segregated_loss, _probs = dev_step(graphdef, state, images, annotations, y_seq, y_mask, pos_embed, (cfg.loss.sw, cfg.loss.aw))
-
-            running_loss += loss
-            running_survival_loss += segregated_loss[0]
-            running_annotation_loss += segregated_loss[1]
-            dev_probs[step, :, :] = np.array(_probs)
-            dev_golds[step, :] = batch['y'].numpy()
-            dev_censors[step, :] = batch['time_at_event'].numpy()
-
-        wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-        survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
-        log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
-
-        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
-            if survival_metrics['dev/c_index'] >= ckpt_metric:
-                best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
-                ckpt_metric = survival_metrics['dev/c_index']
     return
 
-@jax.jit
+@partial(jax.jit, static_argnames=('diff_state'))
 def train_step(
         graphdef: nnx.GraphDef,
         state: nnx.State,
@@ -260,11 +268,12 @@ def train_step(
         y_seq: jax.Array,
         y_mask: jax.Array,
         pos_embed: jax.Array,
-        loss_weights: tuple
+        loss_weights: tuple,
+        diff_state: nnx.DiffState
 ):
     (model, optimizer) = nnx.merge(graphdef, state)
     model.train()
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=diff_state)
     (loss, (survival_loss, annotation_loss, probs)), grads = grad_fn(model, images, annotations, y_seq, y_mask, pos_embed, loss_weights[0], loss_weights[1])
     optimizer.update(grads)
     state = nnx.state((model, optimizer))

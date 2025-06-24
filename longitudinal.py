@@ -113,8 +113,9 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, use_cls=cfg.attention.use_cls, 
-                      use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, 
+                      use_cls=cfg.attention.use_cls, use_mean_token=cfg.attention.use_mean_token, use_attention_pooling=cfg.attention.use_attention_pooling,
+                      fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       pretrained_model_type=cfg.log.pretrained_model_type,
@@ -233,7 +234,7 @@ def main(cfg: Config):
     ckpt_metric = 0
 
     if cfg.log.pretrained_model_type == "finetuned":
-        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + cfg.attention.use_attention_pooling # to account for embed dim
     else:
         dim_multiplier = 1
 
@@ -279,51 +280,52 @@ def main(cfg: Config):
                 wandb.log({"train/loss_step": loss})
                 wandb.log({"lr": state[1].opt_state.inner_opt_state.hyperparams['learning_rate'].value.item()})
 
+                # Dev
+                running_loss = 0
+                dev_probs.fill(0)
+                dev_golds.fill(0)
+                dev_censors.fill(0)
+                for step, batch in enumerate(dev_loader):
+                    images_dl = asdlpack(batch['image0'])
+                    image0 = jnp.from_dlpack(images_dl)
+
+                    images_dl = asdlpack(batch['image1'])
+                    image1 = jnp.from_dlpack(images_dl)
+
+                    images_dl = asdlpack(batch['image2'])
+                    image2 = jnp.from_dlpack(images_dl)
+
+                    y_seq_dl = asdlpack(batch['y_seq'])
+                    y_seq = jnp.from_dlpack(y_seq_dl)
+
+                    y_mask_dl = asdlpack(batch['y_mask'])
+                    y_mask = jnp.from_dlpack(y_mask_dl)
+
+                    t_mask_dl = asdlpack(batch['t_mask'])
+                    t_mask = jnp.from_dlpack(t_mask_dl)
+
+                    loss, _probs = dev_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
+
+                    running_loss += loss
+                    dev_probs[step, :, :] = np.array(_probs)
+                    dev_golds[step, :] = batch['y'].numpy()
+                    dev_censors[step, :] = batch['time_at_event'].numpy()
+
+                wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
+                survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+                log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
+
+                if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
+                    if survival_metrics['dev/c_index'] >= ckpt_metric:
+                        best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                        ckpt_metric = survival_metrics['dev/c_index']
+                    last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         # Compute metrics
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
 
-        # Dev
-        running_loss = 0
-        dev_probs.fill(0)
-        dev_golds.fill(0)
-        dev_censors.fill(0)
-        for step, batch in enumerate(dev_loader):
-            images_dl = asdlpack(batch['image0'])
-            image0 = jnp.from_dlpack(images_dl)
-
-            images_dl = asdlpack(batch['image1'])
-            image1 = jnp.from_dlpack(images_dl)
-
-            images_dl = asdlpack(batch['image2'])
-            image2 = jnp.from_dlpack(images_dl)
-
-            y_seq_dl = asdlpack(batch['y_seq'])
-            y_seq = jnp.from_dlpack(y_seq_dl)
-
-            y_mask_dl = asdlpack(batch['y_mask'])
-            y_mask = jnp.from_dlpack(y_mask_dl)
-
-            t_mask_dl = asdlpack(batch['t_mask'])
-            t_mask = jnp.from_dlpack(t_mask_dl)
-
-            loss, _probs = dev_step(graphdef, state, image0, image1, image2, y_seq, y_mask, t_mask, pos_embed, time_embed)
-
-            running_loss += loss
-            dev_probs[step, :, :] = np.array(_probs)
-            dev_golds[step, :] = batch['y'].numpy()
-            dev_censors[step, :] = batch['time_at_event'].numpy()
-
-        wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-        survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
-        log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
-
-        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
-            if survival_metrics['dev/c_index'] >= ckpt_metric:
-                best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
-                ckpt_metric = survival_metrics['dev/c_index']
-            last_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
     return
 
 @partial(jax.jit, static_argnames=('diff_state'))
