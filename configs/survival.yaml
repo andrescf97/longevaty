@@ -44,6 +44,7 @@ training:
     sampler: "stratified"
     minority_samples_per_batch: 1
     freeze_encoder: True
+    freeze_mha: False
 
 optimizer:
     lr_scheduler: onecycle
