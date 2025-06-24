@@ -103,6 +103,7 @@ class AttentionConfig:
     use_attention: bool = True
     use_cls: bool = True
     use_mean_token: bool = True
+    use_attention_pooling: bool = True
 
 @dataclass
 class LoggingConfig:
