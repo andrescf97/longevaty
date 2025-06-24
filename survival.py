@@ -60,7 +60,7 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-
+    
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
@@ -183,6 +183,7 @@ def main(cfg: Config):
     dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     ckpt_metric = 0
+    save_step = 0
     for epoch in range(start_epoch, cfg.training.epochs):
         # Train
         # Init storage variables
@@ -251,8 +252,11 @@ def main(cfg: Config):
 
                 if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
                     if survival_metrics['dev/c_index'] >= ckpt_metric:
-                        best_mngr.save(step=epoch, args=ocp.args.StandardSave(state))
+                        print("Saving checkpoint")
+                        best_mngr.wait_until_finished()   
+                        best_mngr.save(step=save_step, args=ocp.args.StandardSave(state), force=True)
                         ckpt_metric = survival_metrics['dev/c_index']
+                        save_step += 1
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
