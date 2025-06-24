@@ -104,7 +104,7 @@ def main(cfg: Config):
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=False, drop_last=True,
                         generator=dev_dataset_gnr)
-    
+
     # Model
     dtype = jnp.bfloat16 if cfg.training.dtype == "bfloat16" else jnp.float32
     model = LungeVity(patch_size=cfg.model.patch_size, hidden_dim=cfg.model.enc_dim,
@@ -114,11 +114,15 @@ def main(cfg: Config):
                       dropout_rate=cfg.model.dropout_rate,
                       dtype=dtype,
                       rngs=nnx.Rngs(cfg.model.rng))
+    
+    # Optimizer
+    steps_per_epoch = len(sampler) // cfg.training.batch_size
+    dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
     scheduler = optax.schedules.warmup_cosine_decay_schedule(
         init_value=cfg.optimizer.init_lr,
         peak_value=cfg.optimizer.peak_lr,
-        warmup_steps=cfg.optimizer.warmup_epochs * (len(monai_dict_train) // cfg.training.batch_size),
-        decay_steps=cfg.training.epochs * (len(monai_dict_train) // cfg.training.batch_size),
+        warmup_steps=cfg.optimizer.warmup_epochs * (steps_per_epoch // cfg.training.accumulation_steps),
+        decay_steps=cfg.training.epochs * steps_per_epoch,
         end_value=cfg.optimizer.end_lr
     )
     tx = optax.inject_hyperparams(optax.adamw)(learning_rate=scheduler)
@@ -171,9 +175,6 @@ def main(cfg: Config):
     pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
 
     # Init running value arrays
-    steps_per_epoch = len(sampler) // cfg.training.batch_size
-    dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
-
     probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
     golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
     censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
