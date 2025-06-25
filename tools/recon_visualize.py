@@ -62,8 +62,8 @@ def reconstruct_images(gt_tokens, annotation_tokens, attn_weights,
 
 def combine_images(gt, annotation, attn_interp):
     scan_video = gt[0:1, :, :, :]
-    attention_video = attn_interp[0, :, :, :]
-    annotation_video = annotation[0, :, :, :]
+    attention_video = attn_interp[0, :, :, :] if attn_interp.ndim == 4 else attn_interp[:,:,:]
+    annotation_video = annotation[0, :, :, :] if annotation.ndim == 4 else annotation[:,:,:]
     scaled_scan_video = ((scan_video + 1) * 127.5).to(dtype=torch.uint8)
     
     att_min, att_max = attention_video.numpy().min(), attention_video.numpy().max()
@@ -76,6 +76,11 @@ def combine_images(gt, annotation, attn_interp):
 
     scaled_scan_attention = torch.round(torch.tensor(rgb_attention * 255)).to(torch.uint8) #this does not work with wandb logging
     scaled_rgb_annotation = torch.round(torch.tensor(rgb_annotation * 255)).to(torch.uint8) #this does not work with wandb logging
+
+    if scaled_scan_attention.ndim == 3:
+        scaled_scan_attention.unsqueeze(0)
+    if scaled_rgb_annotation.ndim == 3:
+        scaled_rgb_annotation.unsqueeze(0)
 
     rgb_attention = scaled_scan_attention[:,:,:,:3]
     rgb_annotation = scaled_rgb_annotation[:,:,:,:3]
