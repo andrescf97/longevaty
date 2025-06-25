@@ -4,7 +4,6 @@ os.environ['XLA_FLAGS'] = (
     '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'  
 
 import hydra
 from omegaconf import OmegaConf
@@ -75,8 +74,9 @@ def main(cfg: Config):
     model = Longivity(patch_size=cfg.model.patch_size, enc_hidden_dim=cfg.model.enc_dim,
                       hidden_dim=cfg.model.mlp_hidden_dim, max_followup=cfg.data.max_followup,
                       enc_blocks=cfg.model.enc_depth, enc_heads=cfg.model.enc_heads, dropout_rate=cfg.model.dropout_rate,
-                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, use_cls=cfg.attention.use_cls, 
-                      use_mean_token=cfg.attention.use_mean_token, fusion_layer=cfg.attention.use_fusion_layer,
+                      blocks=cfg.longitudinal.blocks, bidirectional=cfg.longitudinal.bidirectional, use_attention=cfg.attention.use_attention, 
+                      use_cls=cfg.attention.use_cls, use_mean_token=cfg.attention.use_mean_token, use_attention_pooling=cfg.attention.use_attention_pooling,
+                      fusion_layer=cfg.attention.use_fusion_layer,
                       longitundinal_model=cfg.longitudinal.model, rnn_cell=cfg.longitudinal.rnn_cell,
                       rnn_hidden_dim=cfg.longitudinal.rnn_hidden_dim, heads=cfg.longitudinal.heads,
                       pretrained_model_type=cfg.log.pretrained_model_type,
@@ -111,7 +111,7 @@ def main(cfg: Config):
     golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
     censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
     if cfg.log.pretrained_model_type == "finetuned":
-        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + 1 # to account for embed dim
+        dim_multiplier = cfg.attention.use_cls + cfg.attention.use_mean_token + cfg.attention.use_attention_pooling # to account for embed dim
     else:
         dim_multiplier = 1
     for step, batch in tqdm(enumerate(test_loader), total=steps_per_epoch):
