@@ -38,6 +38,7 @@ class Vital(nnx.Module):
             rngs=rngs
         )
         self.encoding_projection = nnx.Linear(enc_dim, dec_dim, rngs=rngs, dtype=dtype)
+        self.mask_token = nnx.Param(jnp.zeros((1, 1, dec_dim)))
 
     def __call__(
         self,
@@ -52,7 +53,10 @@ class Vital(nnx.Module):
         embeddings = self.encoder(input, enc_pos_embed)
         projected_embeddings = self.encoding_projection(embeddings)
 
-        all_embeddings = jnp.concatenate([projected_embeddings, masked_tokens], axis=1)
+        num_masked_tokens = masked_tokens.shape[1]
+        mt = jnp.tile(self.mask_token, [B, num_masked_tokens, 1])
+
+        all_embeddings = jnp.concatenate([projected_embeddings, mt], axis=1)
         all_indices = jnp.concatenate([selected_indices, masked_indices], axis=1)
 
         shuffled_pos_embed = jnp.take_along_axis(dec_pos_embed, all_indices, axis=1)
