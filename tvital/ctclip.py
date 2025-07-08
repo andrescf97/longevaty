@@ -739,10 +739,8 @@ class CTViT(nn.Module):
             indices, = unpack(indices, packed_fhw_shape, 'b *')
             return indices
 
-        print(tokens.shape)
         tokens = rearrange(tokens, 'b (t h w) d -> b t h w d', h = h, w = w)
 
-        print(tokens.shape)
         if return_encoded_tokens:
             return tokens
             

@@ -39,7 +39,7 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
 load_config_store()
 
-@hydra.main(config_path="./configs", config_name='others.yaml', version_base=None)
+@hydra.main(config_path="./configs", config_name='others-test.yaml', version_base=None)
 def main(cfg: Config):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -65,16 +65,11 @@ def main(cfg: Config):
 
     test_ds = Dataset(data=monai_dict_test, transform=test_transforms)
 
-    test_dataset_gnr = Generator(device="cpu")
-    test_dataset_gnr.manual_seed(0)
-
     test_loader = DataLoader(test_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, pin_memory=False, drop_last=True,
-                        collate_fn=PadListDataCollate(),
-                        generator=test_dataset_gnr)
+                        persistent_workers=True, pin_memory=False, drop_last=False)
 
-    model = SybilNet.load("/pool/data/lung/NLST/checkpoints_sybil_our/resnet_18-epoch=04-wise-bee-124.ckpt")
+    model = SybilNet.load("/pool/users/chev/Sybil/checkpoints/65fd1f04cb4c5847d86a9ed8ba31ac1a.ckpt")
     model = model.to(device)
 
     steps_per_epoch = len(monai_dict_test) // cfg.training.batch_size
@@ -90,6 +85,8 @@ def main(cfg: Config):
                 image = batch['image'].to(device)
                 y_seq = batch['y_seq'].to(device)
                 y_mask = batch['y_mask'].to(device)
+
+                image = image.permute(0,1,4,2,3)
                 loss, _probs = step_fn(model, image, y_seq, y_mask, device)
 
         probs[step, :, :] = _probs.detach().cpu().numpy()

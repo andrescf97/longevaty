@@ -124,9 +124,9 @@ class LoggingConfig:
     log_at_these_steps: int = MISSING
     log_scans_at_these_epochs: int = MISSING
     num_predictions: int = MISSING
-    cancer_cases_to_log: int = 1
-    laterality_cases_to_log: int = 1
-    healthy_cases_to_log: int = 1
+    cancer_cases_to_log: int = 10
+    laterality_cases_to_log: int = 10
+    healthy_cases_to_log: int = 10
     pretrained_model_type: str = "pretrained"
     
 

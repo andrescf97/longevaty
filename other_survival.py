@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import hydra
 from omegaconf import OmegaConf
@@ -55,6 +55,9 @@ def main(cfg: Config):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
+
+    monai_dict_train = monai_dict_train[40:1640]
+    monai_dict_dev = monai_dict_dev[40:1640]
 
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
     
@@ -124,7 +127,7 @@ def main(cfg: Config):
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=2, T_mult=1, eta_min=cfg.optimizer.peak_lr * 1e-3)
         case LRScheduler.onecycle:
             scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
-                                                            epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size) + 2,
+                                                            epochs=cfg.training.epochs, steps_per_epoch=(len(sampler) // cfg.training.batch_size) + 2,
                                                             pct_start=0.2)
         case LRScheduler.cycle:
             max_number_of_steps = cfg.training.epochs * ((len(train_loader) // cfg.training.batch_size) + 2)
@@ -165,7 +168,10 @@ def main(cfg: Config):
             t_mask = batch['t_mask'].bool()
 
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.training.use_amp):
-                loss, _probs = step_fn(model, batch['image0'], batch['image1'], batch['image2'], batch['y_seq'], batch['y_mask'], t_mask, time_embed, device)
+                image0 = batch['image0'].permute(0,1,4,2,3)
+                image1 = batch['image1'].permute(0,1,4,2,3)
+                image2 = batch['image2'].permute(0,1,4,2,3)
+                loss, _probs = step_fn(model, image0, image1, image2, batch['y_seq'], batch['y_mask'], t_mask, time_embed, device)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -198,8 +204,13 @@ def main(cfg: Config):
             for step, batch in enumerate(dev_loader):
                 rel_time = batch['rel_t']
                 time_embed = build_rel_time_embeddings(rel_time, dim=cfg.model.enc_dim)
+                t_mask = batch['t_mask'].bool()
 
-                loss, _probs = step_fn(model, batch['image0'], batch['image1'], batch['image2'], batch['y_seq'], batch['y_mask'], batch['t_mask'], time_embed, device)
+                with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.training.use_amp):
+                    image0 = batch['image0'].permute(0,1,4,2,3)
+                    image1 = batch['image1'].permute(0,1,4,2,3)
+                    image2 = batch['image2'].permute(0,1,4,2,3)
+                    loss, _probs = step_fn(model, image0, image1, image2, batch['y_seq'], batch['y_mask'], t_mask, time_embed, device)
                 running_loss += loss.item()
                 dev_probs[step, :, :] = _probs.detach().cpu().numpy()
                 dev_golds[step, :] = batch['y'].cpu().numpy()

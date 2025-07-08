@@ -1,0 +1,220 @@
+defaults:
+  - base_config
+  - _self_
+
+wandb:
+    dry_run: False
+    project_name: "survival-jax"
+    task: "survival"
+    entity: "mri-ai-lab"
+
+data:
+    dataset_file: "/pool/data/lung/NLST/json/nlst_metadata.json"
+    dataset_file_100: "/pool/data/lung/NLST/json/nlst_metadata.json"
+    slice_thickness_threshold: 2.5
+    max_followup: 6
+    num_classes: 1
+    assign_splits: True
+    use_thinnest_cut: True
+    corrupted_paths: "./files/corrupted_img_paths.pkl"
+    google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
+    data_root: "/pool/data/lung/NLST/npy/"
+    monai_dict_train: "/pool/data/lung/NLST/json/train_longi.json"
+    monai_dict_dev: "/pool/data/lung/NLST/json/dev_longi.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/test_longi.json"
+    max_train_len: 24000
+    img_size: [160, 240, 128]
+
+
+training:
+    dtype: bfloat16
+    mask_ratio: 0.5
+    use_amp: True
+    seed: 0
+    num_workers: 1
+    dev_num_workers: 8
+    test_num_workers: 1
+    prefetch_factor: 5
+    dev_prefetch_factor: 5
+    shuffle: True
+    epochs: 1000
+    batch_size: 4
+    to_checkpoint: False
+    sampler: "weighted"
+    underrepresented_weight: 14
+    minority_samples_per_batch: 2
+    freeze_encoder: True
+
+optimizer:
+    lr_scheduler: none
+    peak_lr: 8e-6
+    init_lr: 8e-6
+    end_lr: 8e-6
+    warmup_epochs: 0
+
+attention:
+    heads: 4
+    use_cls: False
+    use_mean_token: True
+
+loss:
+    sw: 10
+    aw: 1
+
+log:
+    ckpt_loc: "/pool/data/lung/checkpoints/sybil/"
+    ckpt_load_loc: "/nlst_data/checkpoints/mae/"
+    mae_ckpt_load: 'vit-last'
+    mae_use_checkpoint: 'astral-plasma-71'
+    ckpt_best: 'vit'
+    ckpt_last: 'vit-last'
+    ckpt_load: 'vit-last'
+    use_checkpoint: 'test'
+    checkpoint_at_epoch: 1000
+    log_at_these_steps: 1000
+    log_scans_at_these_epochs: 5
+    num_predictions: 20
+
+model:
+    patch_size: 16
+    mlp_hidden_dim: 512
+    enc_dim: 512
+    dec_dim: 768
+    dropout_rate: 0.1
+    enc_heads: 12
+    enc_depth: 12
+    dec_heads: 6
+    dec_depth: 4
+    in_chans: 1
+    rng: 24
+    fusion_layer: True
+
+longitudinal:
+    encoder: "ctrate"
+    model: "transformer"
+    rnn_hidden_dim: 768
+    rnn_cell: "simple"
+    blocks: 1
+    heads: 8
+    bidirectional: False
+    dropout_rate: 0.1
+
+transform:
+    train_tf:
+        LoadImaged:
+            keys: ['image0', 'image1', 'image2']
+        EnsureChannelFirstd:
+            keys: ['image0', 'image1', 'image2']
+        Resized:
+            keys: ['image0', 'image1', 'image2']
+            mode: ["trilinear", "trilinear", "trilinear"]
+            # spatial_size: [160, 240, 128]
+            spatial_size: [480, 480, 240]
+        ToDeviced:
+            keys: ['image0', 'image1', 'image2']
+            device: "cuda"
+        RandFlipd_1:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            spatial_axis: 0
+        RandFlipd_2:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            spatial_axis: 1
+        RandFlipd_3:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            spatial_axis: 2
+        RandRotated:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.5
+            range_x: 0.2
+            range_y: 0.2
+            range_z: 0.2
+            mode: ['bilinear', 'bilinear', 'bilinear']
+        RandHistogramShiftd:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            num_control_points: [5,8]
+        RandGaussianSharpend:
+            keys: ['image0', 'image1', 'image2']
+            sigma1_x: [0.1,0.5]
+            sigma1_y: [0.1,0.5]
+            sigma1_z: [0.1,0.5]
+            sigma2_x: 0.3
+            sigma2_y: 0.3
+            sigma2_z: 0.3
+            prob: 0.33
+            alpha: [1.5, 10]
+        RandGaussianNoised:
+            keys: ['image0', 'image1', 'image2']
+            prob: 0.33
+            mean: 0
+            std: 0.1
+        # RepeatChanneld:
+        #     keys: ['image0', 'image1', 'image2']
+        #     repeats: 3
+        ToTensord_1:
+            keys: ['image0', 'image1', 'image2',  'y_seq', 'rel_t']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask', 't_mask']
+            track_meta: False
+            device: "cuda"
+            dtype: bool
+
+    dev_tf:
+        LoadImaged:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        EnsureChannelFirstd:
+            keys: ['image0', 'image1', 'image2']
+            allow_missing_keys: True
+        Resized:
+            keys: ['image0', 'image1', 'image2']
+            mode: ["trilinear", "trilinear", "trilinear"]
+            spatial_size: [480, 480, 240]
+            allow_missing_keys: True
+        ToDeviced:
+            keys: ['image0', 'image1', 'image2']
+            device: "cuda"
+        # RepeatChanneld:
+        #     keys: ['image0', 'image1', 'image2']
+        #     repeats: 3
+        ToTensord_1:
+            keys: ['image0', 'image1', 'image2',  'y_seq', 'rel_t']
+            allow_missing_keys: True
+            track_meta: False
+            device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask', 't_mask']
+            track_meta: False
+            device: "cuda"
+            dtype: bool
+
+    test_tf:
+        LoadImaged:
+            keys: ['image']
+        EnsureChannelFirstd:
+            keys: ['image']
+        # Resized:
+        #     keys: ['image']
+        #     mode: ["trilinear"]
+        #     spatial_size: [160, 240, 128]
+        RepeatChanneld:
+            keys: ['image']
+            repeats: 3
+        ToTensord_1:
+            keys: ['image',  'y_seq']
+            track_meta: False
+            # device: "cuda"
+            dtype: bfloat16
+        ToTensord_2:
+            keys: ['y_mask']
+            track_meta: False
+            # device: "cuda"
+            dtype: bool

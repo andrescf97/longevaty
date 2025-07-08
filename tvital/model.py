@@ -4,7 +4,7 @@ from typing import Optional, Type, Final
 import torch
 from torch import nn
 import torch.nn.functional as F
-from tvital.sybil import SybilNet
+from tvital.sybil import SybilNet, AttentionPool
 from tvital.ctclip import CTViT
 
 from timm.models.vision_transformer import LayerScale
@@ -76,6 +76,7 @@ class Longevity(nn.Module):
             s = torch.load("/pool/data/lung/CT-RATE/models/CT-CLIP-Related/CT-CLIP_v2.pt", map_location="cpu", weights_only=False)
             encoder_state_dict = {k.replace("visual_transformer.", ""): v for k, v in s.items() if k.startswith("visual_transformer.")}
             self.encoder.load_state_dict(encoder_state_dict, strict=True)
+            self.encoder_head = AttentionPool()
 
 
         self.relu = nn.ReLU(inplace=False)
@@ -103,9 +104,9 @@ class Longevity(nn.Module):
         ])
 
     def forward(self, img0, img1, img2, t_mask, time_embed):
-        emb0 = self.encoder_head(self.encoder(img0))
-        emb1 = self.encoder_head(self.encoder(img1))
-        emb2 = self.encoder_head(self.encoder(img2))
+        emb0 = self.encoder_head(self.encoder(img0, return_encoded_tokens=True))
+        emb1 = self.encoder_head(self.encoder(img1, return_encoded_tokens=True))
+        emb2 = self.encoder_head(self.encoder(img2, return_encoded_tokens=True))
 
         batch = torch.stack((emb0, emb1, emb2), dim=1)
         B, _, _ = batch.shape

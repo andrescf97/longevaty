@@ -75,6 +75,49 @@ class MultiAttentionPool(nn.Module):
 
         return output 
 
+class AttentionPool(nn.Module):
+    def __init__(self):
+        super(AttentionPool, self).__init__()
+        params = {
+            'num_chan': 512,
+            'conv_pool_kernel_size': 11,
+            'stride': 1
+            }
+        self.image_pool1 = Simple_AttentionPool_MultiImg(**params)
+        self.volume_pool1 = Simple_AttentionPool(**params)
+
+        self.image_pool2 = PerFrameMaxPool()
+        self.volume_pool2 = Conv1d_AttnPool(**params)
+
+        self.global_max_pool = GlobalMaxPool()
+
+        self.multi_img_hidden_fc = nn.Linear(2 * 512, 512)
+        self.hidden_fc = nn.Linear(3 * 512, 512)         
+
+    def forward(self, x):
+        #X dim: B, C, T, W, H
+        output = {}
+        
+        image_pool_out1 = self.image_pool1(x) # contains keys: "multi_image_hidden", "image_attention"
+        volume_pool_out1 = self.volume_pool1(image_pool_out1['multi_image_hidden'])  # contains keys: "hidden", "volume_attention"
+
+        image_pool_out2 = self.image_pool2(x) # contains keys: "multi_image_hidden"
+        volume_pool_out2 = self.volume_pool2(image_pool_out2['multi_image_hidden']) # contains keys: "hidden", "volume_attention"
+
+        for pool_out, num in [(image_pool_out1, 1), (volume_pool_out1, 1), (image_pool_out2, 2), (volume_pool_out2, 2) ]:
+            for key, val in pool_out.items():
+                output['{}_{}'.format(key, num)] = val
+    
+        maxpool_out = self.global_max_pool(x)
+        output['maxpool_hidden'] = maxpool_out['hidden']
+        
+        multi_image_hidden = torch.cat( [ image_pool_out1['multi_image_hidden'], image_pool_out2['multi_image_hidden']], dim = -2 )
+        output['multi_image_hidden'] = self.multi_img_hidden_fc(multi_image_hidden.permute([0,2,1]).contiguous()).permute([0,2,1]).contiguous()
+
+        hidden = torch.cat( [ volume_pool_out1['hidden'], volume_pool_out2['hidden'], output['maxpool_hidden']], dim = -1 )
+        output['hidden'] = self.hidden_fc(hidden)
+
+        return output['hidden'] 
 
 class GlobalMaxPool(nn.Module):
     '''
