@@ -15,7 +15,7 @@ from vital.transformations import make_transformations
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
 from tvital.checkpointing import load_checkpointed_state, save_checkpoint
-
+from vital.models.vital import Vital
 
 from tvital.model import Longevity, build_rel_time_embeddings
 
@@ -26,6 +26,8 @@ from torch.amp import GradScaler
 from torch import Generator
 from torch.utils.data import WeightedRandomSampler
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim import AdamW
 import torch.multiprocessing as mp
 import numpy as np
 import pandas as pd
@@ -72,7 +74,17 @@ def main(cfg: Config):
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=True, drop_last=True)
-    model = 
+    model = Vital()
+    start_epoch = 0
+    optimizer = AdamW(model.parameters(), lr=cfg.training.initial_learning_rate)
+    scheduler = OneCycleLR(
+                    optimizer,
+                    max_lr=cfg.training.main_learning_rate,
+                    epochs=cfg.training.epochs-start_epoch,
+                    steps_per_epoch=(len(loader) // cfg.pseudo_batch) + 2,
+                    pct_start=0.1
+                )
+
                         
 
             
