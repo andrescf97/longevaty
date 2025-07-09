@@ -122,6 +122,19 @@ class Patchify(transforms.MapTransform):
         data["image"] = patched_image.squeeze()
 
         return data
+    
+    
+class Permuted(transforms.MapTransform):
+    def __init__(self, keys):
+        super().__init__(keys)
+
+    def __call__(self, data):
+        image = data["image"]
+        # Permute the image dimensions for 3d conv patch embedding
+        permuted_image = image.permute(0, 3, 1, 2)
+        data['image'] = permuted_image
+
+        return data
 
 
 

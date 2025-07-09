@@ -8,3 +8,6 @@ def to_save_checkpoint(epoch, total_epochs, log_at_these_epochs, to_checkpoint=T
 
 def to_visualize_images(step, total_steps, log_at_these_steps):
     return (step % log_at_these_steps == 0)  or ((step + 1) == total_steps)
+
+def to_visualize_images_epoch(epoch, total_epochs, log_at_these_epochs):
+    return (epoch % log_at_these_epochs == 0)  or ((epoch + 1) == total_epochs)

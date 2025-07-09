@@ -41,6 +41,7 @@ class LossFn(Enum):
 @dataclass
 class TrainingConfig:
     dtype: str = 'bfloat16'
+    use_amp: bool = False
     mask_ratio: float = 0.4
     seed: int = 0
     num_workers: int =  8
@@ -58,6 +59,7 @@ class TrainingConfig:
     minority_samples_per_batch: int = 1
     freeze_encoder: bool = False
     freeze_mha: bool = False
+    resume: bool = False
 
 @dataclass
 class OptimizerConfig:

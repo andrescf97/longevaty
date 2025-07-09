@@ -257,7 +257,7 @@ class Eva(nn.Module):
 
         self.num_prefix_tokens = num_reg_tokens
 
-        num_patches = np.prod(ref_feat_shape)
+        num_patches = np.prod(ref_feat_shape, dtype=int)
 
         self.pos_embed = (
             nn.Parameter(torch.zeros(1, num_patches + self.num_prefix_tokens, embed_dim)) if use_abs_pos_emb else None

@@ -1,10 +1,10 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+import numpy as np
 from tvital.eva import Eva, PatchEmbed
 from tvital.vit import ViT
-
+from utils.masker import Masker
 from einops import rearrange
 
 class Vital(nn.Module):
@@ -20,30 +20,37 @@ class Vital(nn.Module):
         dec_blocks: int = 12,
         dec_heads: int = 12,
         dropout_rate: float = 0.2,
+        mask_type: str = "random",
+        mask_ratio: float = 0.75,
+        num_reg_tokens: int = 0,  # Number of additional tokens for the encoder
     ):
+        super().__init__()
+        
         if transformer == "eva":
             self.encoder =  Eva(
                 embed_dim=enc_dim,
                 depth=enc_blocks,
                 num_heads=enc_heads,
-                pos_drop_rate=0.2,
-                patch_drop_rate=0.2,
-                proj_drop_rate=0.2,
-                attn_drop_rate=0.2,
-                drop_path_rate=0.2,
-                drouput_rate=dropout_rate
+                pos_drop_rate=0.0,
+                patch_drop_rate=0.0,
+                proj_drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.0,
+                ref_feat_shape=grid_size,
+                num_reg_tokens=0,  # Assuming 1 prefix ("cls") token for the encoder
             )
 
             self.decoder = Eva(
                 embed_dim=dec_dim,
                 depth=dec_blocks,
                 num_heads=dec_heads,
-                pos_drop_rate=0.2,
-                patch_drop_rate=0.2,
-                proj_drop_rate=0.2,
-                attn_drop_rate=0.2,
-                drop_path_rate=0.2,
-                drouput_rate=dropout_rate
+                pos_drop_rate=0.0,
+                patch_drop_rate=0.0,
+                proj_drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.0,
+                ref_feat_shape=grid_size,
+                num_reg_tokens=0, 
             )
         else:
             self.encoder = ViT(
@@ -63,8 +70,12 @@ class Vital(nn.Module):
 
         self.encoding_projection = nn.Linear(enc_dim, dec_dim)
         
+        # MAE Masker
+        self.masker = Masker(mask_type=mask_type, 
+                             mask_ratio=mask_ratio,
+                             grid_size=grid_size)
         self.down_projection = PatchEmbed(patch_size, input_channels=1, embed_dim=enc_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, enc_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, enc_dim)) #TODO: check if this is needed
         self.mask_token = nn.Parameter(torch.zeros(1, 1, dec_dim))
 
     def initialize_parameters(self):        
@@ -100,8 +111,11 @@ class Vital(nn.Module):
 
     def forward(self, x, selected_indices, masked_indices):
         x = self.patch_embed(x)
+        #CLS
+        #MASKING
+        self.masker
         imgs = torch.take_along_dim(x, selected_indices, dim=1)
-        imgs = self.encoder(imgs, selected_indices) 
+        imgs = self.encoder(imgs, selected_indices)
         imgs = self.encoding_projection(imgs)
 
         masked_tokens = self.mask_token.repeat(imgs.shape[0], len(masked_indices), 1)

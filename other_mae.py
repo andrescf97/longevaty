@@ -15,16 +15,22 @@ from monai import transforms
 from monai.data import Dataset, SmartCacheDataset
 from torch.utils.data import DataLoader, TensorDataset
 from monai.utils import set_determinism, first
+from monai.transforms import RandRotated
 
-from data.transformation import MaskPatchesd
-from models.min_mae import MAE, build_3d_sincos_position_embedding
+#from data.transformation import MaskPatchesd
+#from models.min_mae import MAE, build_3d_sincos_position_embedding
 from tools.recon_visualize import visualized_images
-from tools.checkppointing import save_checkpoint, load_checkpointed_state
-from tools.loop_conditions import *
+from tools.checkpointing import save_checkpoint, load_checkpointed_state
+from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint, to_visualize_images_epoch
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix, matthews_corrcoef
 from utils.task_evaluation import task_evaluation
 from utils.logging_helpers import log_images_3d
+from vital.transformations import make_transformations
+from utils.logging_helpers import log_images_3d
+from tvital.mae import Vital
+
+
 
 
 set_determinism(0)
@@ -47,7 +53,7 @@ device = (
 )
 # torch.set_default_device(device)
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="mae")
+@hydra.main(version_base=None, config_path="./configs/", config_name="mae-glutamate.yaml")
 def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
@@ -58,80 +64,51 @@ def main(cfg: DictConfig):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-
-    if cfg.training.use_augs == True:
-
-        transformations_train = transforms.Compose(
-            [
-                transforms.LoadImaged(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                transforms.EnsureChannelFirstd(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                transforms.RandFlipd(keys=['image', 'mask', 'annotation'], allow_missing_keys=True, prob=0.20, spatial_axis=0),
-                transforms.RandFlipd(keys=['image', 'mask', 'annotation'], allow_missing_keys=True, prob=0.20, spatial_axis=1),
-                transforms.RandFlipd(keys=['image', 'mask', 'annotation'], allow_missing_keys=True, prob=0.20, spatial_axis=2),
-
-                transforms.RandRotated(keys=['image', 'mask', 'annotation'], prob=0.20, range_x=0.2, range_y=0.2, range_z=0.2,
-                                    mode=['bilinear', 'nearest', 'nearest'], allow_missing_keys=True),
-                transforms.ToTensord(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                MaskPatchesd(keys=['image'], input_size=cfg.input_size, patch_size=cfg.patch_size)
-            ]
-        )
-
-        transformations_dev = transforms.Compose(
-            [
-                transforms.LoadImaged(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                transforms.EnsureChannelFirstd(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                transforms.ToTensord(keys=['image', 'mask', 'annotation'], allow_missing_keys=True),
-                MaskPatchesd(keys=['image'], input_size=cfg.input_size, patch_size=cfg.patch_size)
-            ]
-        )
-
-    else:
-
-        transformations_train = transforms.Compose(
-            [
-                transforms.LoadImaged(keys=['image', 'mask']),
-                transforms.EnsureChannelFirstd(keys=['image', 'mask']),
-                transforms.ToTensord(keys=['image', 'mask']),
-                MaskPatchesd(keys=['image'], input_size=cfg.input_size, patch_size=cfg.patch_size)
-            ]
-        )
-
-        transformations_dev = transforms.Compose(
-            [
-                transforms.LoadImaged(keys=['image', 'mask']),
-                transforms.EnsureChannelFirstd(keys=['image', 'mask']),
-                transforms.ToTensord(keys=['image', 'mask']),
-                MaskPatchesd(keys=['image'], input_size=cfg.input_size, patch_size=cfg.patch_size)
-            ]
-        )
-
+        
+    train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
+    dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
     dataset_gnr = torch.Generator(device="cpu")
     dataset_gnr.manual_seed(0)
     dev_dataset_gnr = torch.Generator(device="cpu")
     dev_dataset_gnr.manual_seed(0)
 
-    train_ds = Dataset(data=monai_dict_train, transform=transformations_train)
-    dev_ds = Dataset(data=monai_dict_dev, transform=transformations_dev)
+    train_ds = Dataset(data=monai_dict_train, transform=train_transforms)
+    dev_ds = Dataset(data=monai_dict_dev, transform=dev_transforms)
 
-    loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, shuffle=True,
-                        num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch,
+    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, shuffle=True,
+                        num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, 
-                        pin_memory=True, generator=dataset_gnr)
+                        pin_memory=False, generator=dataset_gnr)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
                         num_workers=cfg.training.dev_num_workers,
-                        pin_memory=True, generator=dev_dataset_gnr)
+                        pin_memory=False, generator=dev_dataset_gnr)
 
-    mae_model = MAE(patch_size=cfg.patch_size[0], patch_dim=3,
-                    enc_dim=cfg.architecture.enc_dim, dec_dim=cfg.architecture.dec_dim,
-                    device=device, cfg=cfg)
-    mae_model = mae_model.to(device)
+    model = Vital(
+        transformer=cfg.model.transformer,
+        patch_size=cfg.model.patch_size,
+        grid_size=[
+            int(cfg.data.img_size[0]/cfg.model.patch_size[0]), 
+            int(cfg.data.img_size[1]/cfg.model.patch_size[1]), 
+            int(cfg.data.img_size[2]/cfg.model.patch_size[2])
+            ],
+        enc_dim=cfg.model.enc_dim,
+        enc_blocks=cfg.model.enc_depth,
+        enc_heads=cfg.model.enc_heads,
+        dec_heads=cfg.model.dec_heads,
+        dec_dim=cfg.model.dec_dim,
+        dropout_rate=cfg.model.dropout_rate,
+        mask_ratio=cfg.training.mask_ratio,
+        num_reg_tokens=cfg.model.num_reg_tokens
+                    )
+    
+    model = model.to(device)
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.AdamW(mae_model.parameters(), lr=cfg.learning_rate)
-    if cfg.training.use_scheduler:
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.learning_rate,
-                                                    epochs=cfg.training.epochs, steps_per_epoch=(len(loader) // cfg.training.batch_size) + 2,
-                                                    pct_start=cfg.training.pct_start)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.init_lr)
+    if cfg.optimizer.lr_scheduler == 'onecycle':
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
+                                                    epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size) + 1,
+                                                    pct_start=cfg.optimizer.pct_start)
     else:
         # Use StepLR with gamma=1.0 to keep the learning rate constant
         scheduler = torch.optim.lr_scheduler.StepLR(
@@ -139,13 +116,13 @@ def main(cfg: DictConfig):
             step_size=1,
             gamma=1.0
         )
-    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.use_amp)
+    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.training.use_amp) #TODO
     
     gnr = torch.Generator(device="cpu").manual_seed(42)
 
     best_loss = np.inf
     if cfg.training.resume == True:
-        start_epoch = load_checkpointed_state(cfg.ckpt_loc, cfg.ckpt_name, device, mae_model, optimizer, scheduler, scaler, cfg.learning_rate)
+        start_epoch = load_checkpointed_state(cfg.log.ckpt_loc, cfg.log.use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.learning_rate)
     else:
         start_epoch = 0
     for epoch in range(start_epoch, cfg.training.epochs):
@@ -153,17 +130,17 @@ def main(cfg: DictConfig):
         counter_healthy = 0
         running_loss_train = 0
         running_loss_dev = 0
-        mae_model.train()
-        for step, batch in enumerate(loader):
-            with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.use_amp):
-                if epoch % cfg.training.evaluate_embeddings == 0:
-                    recon_image, loss, masked_indices = step_fn(batch, mae_model, loss_fn,
-                                                cfg.architecture.enc_dim, cfg.architecture.dec_dim,
-                                                cfg.mask_ratio, gnr, evaluate_embeddings=True)
+        model.train()
+        for step, batch in enumerate(train_loader):
+            with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.training.use_amp):
+                if cfg.training.evaluate_embeddings and epoch % cfg.training.evaluate_embeddings == 0:
+                    recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
+                                                cfg.model.enc_dim, cfg.model.dec_dim,
+                                                cfg.training.mask_ratio, gnr, evaluate_embeddings=True)
                 else:
-                    recon_image, loss, masked_indices = step_fn(batch, mae_model, loss_fn,
-                        cfg.architecture.enc_dim, cfg.architecture.dec_dim,
-                        cfg.mask_ratio, gnr, evaluate_embeddings=False)
+                    recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
+                        cfg.model.enc_dim, cfg.model.dec_dim,
+                        cfg.training.mask_ratio, gnr, evaluate_embeddings=False)
                 running_loss_train += loss.item()
                 loss = loss
             scaler.scale(loss).backward()
@@ -171,31 +148,29 @@ def main(cfg: DictConfig):
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
-            log_gradients(mae_model, step, epoch)
+            log_gradients(model, step, epoch)
             log_learning_rate(optimizer.param_groups[0]['lr'])
             optimizer.zero_grad()
 
-            if to_log(step, len(loader), cfg.log_at_every_these_steps):
+            if to_log(step, len(train_loader), cfg.log.log_at_these_steps):
                 loss = loss.item()
-                print(f"{epoch + 1} / {cfg.training.epochs}: step {step + 1}/{len(loader)}, loss {loss}")
+                print(f"{epoch + 1} / {cfg.training.epochs}: step {step + 1}/{len(train_loader)}, loss {loss}")
                 wandb.log({"train/loss_step": loss})
 
-            if to_visualize_images_epoch(epoch, len(loader), cfg.logging.log_scans_at_these_epochs):
-                #add logging of positive cases
-                if to_visualize_images(epoch, cfg.training.epochs, cfg.logging.log_scans_at_these_epochs):
-                    if torch.where(batch['y'] == 1)[0].numel() > 0 and batch['annotation'][torch.where(batch['y'] == 1)[0][0]].sum() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
-                        log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
-                                    batch['original_size'][0], cfg.patch_size,
-                                    step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
-                        counter_cancer += 1
-                    if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.logging.healthy_cases_to_log:
-                        log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 0)[0][0]], batch['annotation'][torch.where(batch['y'] == 0)[0][0]]), batch['lung_hull_region'],
-                                    batch['original_size'][0], cfg.patch_size,
-                                    step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
-                        counter_healthy += 1
+            if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.logging.log_scans_at_these_epochs):
+                if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
+                                batch['original_size'][0], cfg.patch_size,
+                                step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
+                    counter_cancer += 1
+                if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.logging.healthy_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 0)[0][0]], batch['annotation'][torch.where(batch['y'] == 0)[0][0]]), batch['lung_hull_region'],
+                                batch['original_size'][0], cfg.patch_size,
+                                step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
+                    counter_healthy += 1
 
 
-        mae_model.eval()
+        model.eval()
         counter_cancer = 0
         counter_healthy = 0
         with torch.no_grad():
@@ -203,16 +178,16 @@ def main(cfg: DictConfig):
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.use_amp):
                 for step, batch in enumerate(dev_loader):
                     if epoch % cfg.training.evaluate_embeddings == 0:
-                        recon_image, loss, masked_indices = step_fn(batch, mae_model, loss_fn,
+                        recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
                                                     cfg.architecture.enc_dim, cfg.architecture.dec_dim,
                                                     cfg.mask_ratio, gnr, evaluate_embeddings=True, mode='dev')
                     else:
-                        recon_image, loss, masked_indices = step_fn(batch, mae_model, loss_fn,
+                        recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
                             cfg.architecture.enc_dim, cfg.architecture.dec_dim,
                             cfg.mask_ratio, gnr, evaluate_embeddings=False, mode='dev')
                     running_loss_dev += loss.item()
 
-                    if to_visualize_images_epoch(epoch, len(loader), cfg.logging.log_scans_at_these_epochs):
+                    if to_visualize_images(epoch, len(dev_loader), cfg.logging.log_scans_at_these_epochs): #TODO
                         if torch.where(batch['y'] == 1)[0].numel() > 0 and batch['annotation'][torch.where(batch['y'] == 1)[0][0]].sum() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
                             log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
                                         batch['original_size'][0], cfg.patch_size,
@@ -226,7 +201,7 @@ def main(cfg: DictConfig):
             total_loss_dev = running_loss_dev / len(dev_loader)
             print(f"Epoch {epoch + 1}. Val loss: {total_loss_dev}")
             wandb.log({
-                    "train/loss_epoch": running_loss_train / len(loader),
+                    "train/loss_epoch": running_loss_train / len(train_loader),
                     "dev/loss_epoch": running_loss_dev / len(dev_loader),
                     "epoch": epoch,
                     "learning_rate": optimizer.param_groups[0]['lr']
@@ -235,31 +210,28 @@ def main(cfg: DictConfig):
         if to_save_checkpoint(epoch, cfg.training.epochs, cfg.checkpoint_at_epoch):
             if total_loss <= best_loss:
                 save_dest = f"{cfg.ckpt_loc}/mae_{wandb.run.name}.ckpt"
-                save_checkpoint(save_dest, mae_model, epoch, optimizer, scheduler, scaler)
+                save_checkpoint(save_dest, model, epoch, optimizer, scheduler, scaler)
                 best_loss = total_loss
 
         if  epoch % cfg.training.evaluate_embeddings == 0:
             print(f'Evaluating embeddings...')
             os.makedirs(os.path.join(os.getcwd(), cfg.data.path_tab_data_dict), exist_ok=True)
             with open(f"{os.path.join(os.getcwd(), cfg.data.path_tab_data_dict)}/eval_labels_dev.json", 'w') as f:
-                json.dump(mae_model.eval_label_dev, f, indent=4)
-            for task_name in mae_model.eval_label_dev.keys():
-                task_evaluation(mae_model.clst_token_encoder_train, mae_model.clst_token_encoder_dev, 
-                                mae_model.eval_label_train[task_name], mae_model.eval_label_dev[task_name],
+                json.dump(model.eval_label_dev, f, indent=4)
+            for task_name in model.eval_label_dev.keys():
+                task_evaluation(model.clst_token_encoder_train, model.clst_token_encoder_dev, 
+                                model.eval_label_train[task_name], model.eval_label_dev[task_name],
                                 task=task_name, epochs=50, batch_size=64)
-            mae_model.clst_token_encoder_train.clear()
-            mae_model.clst_token_encoder_dev.clear()
-            mae_model.eval_label_train = {k: [] for k in mae_model.eval_label_train.keys()}
-            mae_model.path_tab_data_eval = f"{os.path.join(os.getcwd(), cfg.data.path_tab_data_dict, wandb.run.name)}/eval_labels_dev.json"
+            model.clst_token_encoder_train.clear()
+            model.clst_token_encoder_dev.clear()
+            model.eval_label_train = {k: [] for k in model.eval_label_train.keys()}
+            model.path_tab_data_eval = f"{os.path.join(os.getcwd(), cfg.data.path_tab_data_dict, wandb.run.name)}/eval_labels_dev.json"
             #keep eval labels
 
 
 def step_fn(batch, model, loss_fn,
             enc_dim, dec_dim, mask_ratio, gnr, evaluate_embeddings=True, mode='train'):
-    image = batch['image'].to(device)
-
-    enc_pos_embed = build_3d_sincos_position_embedding(grid_size=batch['grid_size'][0], embed_dim=enc_dim).to(device)
-    dec_pos_embed = build_3d_sincos_position_embedding(grid_size=batch['grid_size'][0], embed_dim=dec_dim).to(device)
+    image = batch['image']
 
     if evaluate_embeddings:
         length = int(image.shape[1])
