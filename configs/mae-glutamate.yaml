@@ -3,7 +3,7 @@
 #   - _self_
 
 wandb:
-    dry_run: True
+    dry_run: False
     project_name: "mae-jax"
     task: "mae"
     entity: "mri-ai-lab"
@@ -27,19 +27,17 @@ data:
 
 
 training:
-    evaluate_embeddings: False
-    evaluate_embeddings_every: 5
-    use_amp: False
+    use_amp: True
     dtype: bfloat16
     mask_ratio: 0.75
     seed: 0
-    num_workers: 10
+    num_workers: 16
     dev_num_workers: 8
     test_num_workers: 1
     prefetch_factor: 5
     shuffle: True
     epochs: 600
-    batch_size: 8
+    batch_size: 16
     to_checkpoint: False
     resume: False
 
@@ -61,30 +59,28 @@ log:
     log_scans_at_these_epochs: 2
     use_checkpoint: 'test_test'
     num_predictions: 20
+    cancer_cases_to_log: 100
+    healthy_cases_to_log: 0
 
 model:
     transformer: 'eva'
     patch_size: [16,16,16]
     enc_dim: 792
     dec_dim: 396
-    dropout_rate: 0.0
+    dropout_rate: 0.1
     enc_heads: 12
     enc_depth: 12
     dec_heads: 6
     dec_depth: 4
     in_chans: 1
     rng: 24
-    num_reg_tokens: 0 #this is our cls for eva encoder
+    num_reg_tokens: 0 # We do not use EVA's register tokens, only our CLS token
 
 transform:
     train_tf:
         LoadImaged:
             keys: ['image']
             allow_missing_keys: True
-        ToDeviced:
-            keys: ['image']
-            allow_missing_keys: True 
-            device: "cuda"
         EnsureChannelFirstd:
             keys: ['image']
             allow_missing_keys: True
@@ -100,6 +96,10 @@ transform:
             mode: ["trilinear"]
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
+        # ToDeviced:
+        #     keys: ['image']
+        #     allow_missing_keys: True 
+        #     device: "cuda"
         # RandHistogramShiftd:
         #     keys: ['image']
         #     prob: 0.33
@@ -138,7 +138,7 @@ transform:
             allow_missing_keys: True
             track_meta: False
             dtype: bfloat16
-            device: "cuda"
+            # device: "cuda"
 
     dev_tf:
         LoadImaged:
@@ -169,4 +169,4 @@ transform:
             allow_missing_keys: True
             track_meta: False
             dtype: bfloat16
-            device: "cuda"
+            # device: "cuda"

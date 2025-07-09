@@ -63,13 +63,15 @@ def main(cfg: DictConfig):
     train_ds = Dataset(data=monai_dict_train, transform=train_transforms)
     dev_ds = Dataset(data=monai_dict_dev, transform=dev_transforms)
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, shuffle=True,
-                        num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, 
-                        pin_memory=False, generator=dataset_gnr)
-    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
-                        num_workers=cfg.training.dev_num_workers,
-                        pin_memory=False, generator=dev_dataset_gnr)
+    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
+                              shuffle=cfg.training.shuffle, 
+                              num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
+                              persistent_workers=True, pin_memory=True, drop_last=True,
+                              generator=dataset_gnr)
+    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
+                        num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
+                        persistent_workers=True, pin_memory=True, drop_last=True,
+                        generator=dev_dataset_gnr)
 
     model = Vital(
         transformer=cfg.model.transformer,
@@ -94,7 +96,7 @@ def main(cfg: DictConfig):
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.init_lr)
     if cfg.optimizer.lr_scheduler == 'onecycle':
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
-                                                    epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size) + 1,
+                                                    epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size),
                                                     pct_start=cfg.optimizer.pct_start)
     else:
         scheduler = torch.optim.lr_scheduler.StepLR(
@@ -104,8 +106,6 @@ def main(cfg: DictConfig):
         )
     scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.training.use_amp) 
     
-    gnr = torch.Generator(device="cpu").manual_seed(42)
-
     best_loss = np.inf
     if cfg.training.resume == True:
         start_epoch = load_checkpointed_state(cfg.log.ckpt_loc, cfg.log.use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.learning_rate)
@@ -138,15 +138,15 @@ def main(cfg: DictConfig):
                 print(f"{epoch + 1} / {cfg.training.epochs}: step {step + 1}/{len(train_loader)}, loss {loss}")
                 wandb.log({"train/loss_step": loss})
 
-            if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
-                if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
-                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
-                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
-                    counter_cancer += 1
-                if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
-                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
-                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
-                    counter_healthy += 1
+        if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+            if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
+                log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                            epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
+                counter_cancer += 1
+            if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
+                log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                            epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
+                counter_healthy += 1
 
 
         model.eval()
@@ -154,9 +154,9 @@ def main(cfg: DictConfig):
         counter_healthy = 0
         with torch.no_grad():
             total_loss = 0
-            with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.use_amp):
+            with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=cfg.training.use_amp):
                 for step, batch in enumerate(dev_loader):
-                    recon_image, loss = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
+                    recon_image, loss, masked_indices = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
                     running_loss_dev += loss.item()
                 if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
                     if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
@@ -176,9 +176,9 @@ def main(cfg: DictConfig):
                     "learning_rate": optimizer.param_groups[0]['lr']
                         })
 
-        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.checkpoint_at_epoch):
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
             if total_loss <= best_loss:
-                save_dest = f"{cfg.ckpt_loc}/mae_{wandb.run.name}.ckpt"
+                save_dest = os.path.join(cfg.log.ckpt_loc, f"mae_{wandb.run.name}.ckpt")
                 save_checkpoint(save_dest, model, epoch, optimizer, scheduler, scaler)
                 best_loss = total_loss
 
