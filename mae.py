@@ -251,11 +251,6 @@ def get_masked_patches(batch_size: int, seq_len: int, mask_ratio: int, rng: jax.
     masked_indices = shuffled_indices[:, selected_len:]
     return masked_indices[:, :, None], selected_indices[:, :, None]
 
-def collate_fn(batch):
-    batch = pd.DataFrame(batch).to_dict(orient="list")
-    for key in batch:
-        batch[key] = jnp.array(np.stack(batch[key], axis=0), dtype=jnp.bfloat16)
-    return batch
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)

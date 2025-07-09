@@ -28,9 +28,7 @@ from utils.task_evaluation import task_evaluation
 from utils.logging_helpers import log_images_3d
 from vital.transformations import make_transformations
 from utils.logging_helpers import log_images_3d
-from tvital.mae import Vital
-
-
+from tvital.mae import Vital, patchify
 
 
 set_determinism(0)
@@ -40,18 +38,7 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (100000, rlimit[1]))
 
 from torch.multiprocessing import Pool, Process, set_start_method
 
-# TODO
-# - Age prediction
-# - hdf5
-
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-# torch.set_default_device(device)
+device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 @hydra.main(version_base=None, config_path="./configs/", config_name="mae-glutamate.yaml")
 def main(cfg: DictConfig):
@@ -80,7 +67,7 @@ def main(cfg: DictConfig):
                         num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, 
                         pin_memory=False, generator=dataset_gnr)
-    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
+    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers,
                         pin_memory=False, generator=dev_dataset_gnr)
 
@@ -110,13 +97,12 @@ def main(cfg: DictConfig):
                                                     epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size) + 1,
                                                     pct_start=cfg.optimizer.pct_start)
     else:
-        # Use StepLR with gamma=1.0 to keep the learning rate constant
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=1,
             gamma=1.0
         )
-    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.training.use_amp) #TODO
+    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.training.use_amp) 
     
     gnr = torch.Generator(device="cpu").manual_seed(42)
 
@@ -125,6 +111,7 @@ def main(cfg: DictConfig):
         start_epoch = load_checkpointed_state(cfg.log.ckpt_loc, cfg.log.use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.learning_rate)
     else:
         start_epoch = 0
+
     for epoch in range(start_epoch, cfg.training.epochs):
         counter_cancer = 0
         counter_healthy = 0
@@ -132,24 +119,18 @@ def main(cfg: DictConfig):
         running_loss_dev = 0
         model.train()
         for step, batch in enumerate(train_loader):
-            with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.training.use_amp):
-                if cfg.training.evaluate_embeddings and epoch % cfg.training.evaluate_embeddings == 0:
-                    recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
-                                                cfg.model.enc_dim, cfg.model.dec_dim,
-                                                cfg.training.mask_ratio, gnr, evaluate_embeddings=True)
-                else:
-                    recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
-                        cfg.model.enc_dim, cfg.model.dec_dim,
-                        cfg.training.mask_ratio, gnr, evaluate_embeddings=False)
+            with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=cfg.training.use_amp):
+                recon_image, loss = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
                 running_loss_train += loss.item()
-                loss = loss
             scaler.scale(loss).backward()
 
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
+
             log_gradients(model, step, epoch)
             log_learning_rate(optimizer.param_groups[0]['lr'])
+
             optimizer.zero_grad()
 
             if to_log(step, len(train_loader), cfg.log.log_at_these_steps):
@@ -157,7 +138,7 @@ def main(cfg: DictConfig):
                 print(f"{epoch + 1} / {cfg.training.epochs}: step {step + 1}/{len(train_loader)}, loss {loss}")
                 wandb.log({"train/loss_step": loss})
 
-            if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.logging.log_scans_at_these_epochs):
+            if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
                 if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
                     log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
                                 batch['original_size'][0], cfg.patch_size,
@@ -229,56 +210,13 @@ def main(cfg: DictConfig):
             #keep eval labels
 
 
-def step_fn(batch, model, loss_fn,
-            enc_dim, dec_dim, mask_ratio, gnr, evaluate_embeddings=True, mode='train'):
-    image = batch['image']
-
-    if evaluate_embeddings:
-        length = int(image.shape[1])
-        # compute length for selected and masked
-
-        # generate batched shuffle indices
-        shuffle_indices_whole = batched_shuffle_indices(image.shape[0], length, device=image.device, gnr=gnr)
-        shuffle_indices_whole = shuffle_indices_whole.to(image.device)
-        shuffled_tokens_whole = image.gather(dim=1, index=shuffle_indices_whole[:, :, None].expand(-1, -1, (16*16*16)))
-        # select and mask the input patches
-        selected_image_whole = shuffled_tokens_whole
-        # select and mask the indices
-        selected_indices_whole = shuffle_indices_whole
-        masked_indices_whole = None
-        selected_enc_pos_embed_whole = enc_pos_embed.expand(image.shape[0], -1, -1).gather(dim=1, index=selected_indices_whole[:, :, None].expand(-1, -1, 768))
-        selected_dec_pos_embed_whole = dec_pos_embed.expand(image.shape[0], -1, -1).gather(dim=1, index=shuffle_indices_whole[:, :, None].expand(-1, -1, 768))
-        with torch.no_grad():
-            _ = model(selected_image_whole, 
-                    selected_enc_pos_embed_whole, selected_dec_pos_embed_whole,
-                    masked_indices_whole, selected_indices_whole, 
-                    collect_cls_token=True, batch=batch, mode=mode)
-
-    # compute length for selected and masked
-    length = int(image.shape[1])
-    sel_length = int(length * (1 - mask_ratio))
-    msk_length = length - sel_length
-
-    # generate batched shuffle indices
-    shuffle_indices = batched_shuffle_indices(image.shape[0], length, device=image.device, gnr=gnr)
-    shuffle_indices = shuffle_indices.to(image.device)
-    unshuffled_indices = shuffle_indices.argsort(dim=1)
-
-    shuffled_tokens = image.gather(dim=1, index=shuffle_indices[:, :, None].expand(-1, -1, (16*16*16)))
-    # select and mask the input patches
-    selected_image = shuffled_tokens[:, :sel_length, :]
-    msk_x = shuffled_tokens[:, -msk_length:, :]
-    # select and mask the indices
-    selected_indices = shuffle_indices[:, :sel_length]
-    masked_indices = shuffle_indices[:, -msk_length:]
-    selected_enc_pos_embed = enc_pos_embed.expand(image.shape[0], -1, -1).gather(dim=1, index=selected_indices[:, :, None].expand(-1, -1, 768))
-    selected_dec_pos_embed = dec_pos_embed.expand(image.shape[0], -1, -1).gather(dim=1, index=shuffle_indices[:, :, None].expand(-1, -1, 768))
-    recon_image = model(selected_image, 
-                    selected_enc_pos_embed, selected_dec_pos_embed,
-                    masked_indices, selected_indices, mode=mode)
-    reconstructed_image = recon_image[:, 1:, :].gather(dim=1, index=unshuffled_indices[:, :, None].expand(-1, -1, (16*16*16)))
-    loss = loss_fn(image, reconstructed_image)
-    return reconstructed_image, loss, masked_indices
+def step_fn(batch, model, loss_fn, device, patch_size):
+    image = batch['image'].to(device)
+    
+    recon_seq = model(image)
+    img_seq = patchify(image, patch_size) 
+    loss = loss_fn(img_seq, recon_seq)
+    return recon_seq, loss
             
 
 def get_mask_patches(batch, gnr, selected_ct_len):
