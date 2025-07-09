@@ -120,7 +120,7 @@ def main(cfg: DictConfig):
         model.train()
         for step, batch in enumerate(train_loader):
             with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=cfg.training.use_amp):
-                recon_image, loss = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
+                recon_image, loss, masked_indices = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
                 running_loss_train += loss.item()
             scaler.scale(loss).backward()
 
@@ -139,15 +139,13 @@ def main(cfg: DictConfig):
                 wandb.log({"train/loss_step": loss})
 
             if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
-                if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
-                    log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
-                                batch['original_size'][0], cfg.patch_size,
-                                step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
+                if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
                     counter_cancer += 1
-                if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.logging.healthy_cases_to_log:
-                    log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 0)[0][0]], batch['annotation'][torch.where(batch['y'] == 0)[0][0]]), batch['lung_hull_region'],
-                                batch['original_size'][0], cfg.patch_size,
-                                step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
+                if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
                     counter_healthy += 1
 
 
@@ -158,27 +156,17 @@ def main(cfg: DictConfig):
             total_loss = 0
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=cfg.use_amp):
                 for step, batch in enumerate(dev_loader):
-                    if epoch % cfg.training.evaluate_embeddings == 0:
-                        recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
-                                                    cfg.architecture.enc_dim, cfg.architecture.dec_dim,
-                                                    cfg.mask_ratio, gnr, evaluate_embeddings=True, mode='dev')
-                    else:
-                        recon_image, loss, masked_indices = step_fn(batch, model, loss_fn,
-                            cfg.architecture.enc_dim, cfg.architecture.dec_dim,
-                            cfg.mask_ratio, gnr, evaluate_embeddings=False, mode='dev')
+                    recon_image, loss = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
                     running_loss_dev += loss.item()
-
-                    if to_visualize_images(epoch, len(dev_loader), cfg.logging.log_scans_at_these_epochs): #TODO
-                        if torch.where(batch['y'] == 1)[0].numel() > 0 and batch['annotation'][torch.where(batch['y'] == 1)[0][0]].sum() > 0 and counter_cancer < cfg.logging.cancer_cases_to_log:
-                            log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 1)[0][0]], batch['annotation'][torch.where(batch['y'] == 1)[0][0]]), batch['lung_hull_region'],
-                                        batch['original_size'][0], cfg.patch_size,
-                                        step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='dev')
-                            counter_cancer += 1
-                        if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.logging.healthy_cases_to_log:
-                            log_images_3d(batch['image'], recon_image, masked_indices, (batch['real_annotation'][torch.where(batch['y'] == 0)[0][0]], batch['annotation'][torch.where(batch['y'] == 0)[0][0]]), batch['lung_hull_region'],
-                                        batch['original_size'][0], cfg.patch_size,
-                                        step, epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='dev')
-                            counter_healthy += 1
+                if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+                    if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
+                        log_images_3d(batch['image'], recon_image, masked_indices, cfg.patch_size,
+                                    epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='dev')
+                        counter_cancer += 1
+                    if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
+                        log_images_3d(batch['image'], recon_image, masked_indices, cfg.patch_size,
+                                    epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='dev')
+                        counter_healthy += 1
             total_loss_dev = running_loss_dev / len(dev_loader)
             print(f"Epoch {epoch + 1}. Val loss: {total_loss_dev}")
             wandb.log({
@@ -194,29 +182,14 @@ def main(cfg: DictConfig):
                 save_checkpoint(save_dest, model, epoch, optimizer, scheduler, scaler)
                 best_loss = total_loss
 
-        if  epoch % cfg.training.evaluate_embeddings == 0:
-            print(f'Evaluating embeddings...')
-            os.makedirs(os.path.join(os.getcwd(), cfg.data.path_tab_data_dict), exist_ok=True)
-            with open(f"{os.path.join(os.getcwd(), cfg.data.path_tab_data_dict)}/eval_labels_dev.json", 'w') as f:
-                json.dump(model.eval_label_dev, f, indent=4)
-            for task_name in model.eval_label_dev.keys():
-                task_evaluation(model.clst_token_encoder_train, model.clst_token_encoder_dev, 
-                                model.eval_label_train[task_name], model.eval_label_dev[task_name],
-                                task=task_name, epochs=50, batch_size=64)
-            model.clst_token_encoder_train.clear()
-            model.clst_token_encoder_dev.clear()
-            model.eval_label_train = {k: [] for k in model.eval_label_train.keys()}
-            model.path_tab_data_eval = f"{os.path.join(os.getcwd(), cfg.data.path_tab_data_dict, wandb.run.name)}/eval_labels_dev.json"
-            #keep eval labels
-
 
 def step_fn(batch, model, loss_fn, device, patch_size):
     image = batch['image'].to(device)
     
-    recon_seq = model(image)
+    recon_seq, mask = model(image)
     img_seq = patchify(image, patch_size) 
     loss = loss_fn(img_seq, recon_seq)
-    return recon_seq, loss
+    return recon_seq, loss, mask
             
 
 def get_mask_patches(batch, gnr, selected_ct_len):

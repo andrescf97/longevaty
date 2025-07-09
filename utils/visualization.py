@@ -7,6 +7,7 @@ import wandb
 from einops import rearrange
 from monai import transforms
 import numpy as np
+from tvital.mae import patchify
 
 
 
@@ -253,7 +254,7 @@ def unpatchify_image(x_patches, patch_size, x_shape):
     return x
 
 
-def visualized_images(gt_patches, recon_patches, annotation_patches, masked_indices, 
+def visualized_images(gt_patches, recon_patches, masked_indices, 
                      patch_size=(16, 16, 16), original_image_shape=(1, 128, 128, 128),
                      slice_pos_list=[0.4, 0.45, 0.5, 0.55, 0.6]):
     c, h, w, d = original_image_shape
@@ -262,21 +263,21 @@ def visualized_images(gt_patches, recon_patches, annotation_patches, masked_indi
     gt_patches = gt_patches.to("cpu")
     recon_patches = recon_patches.to("cpu")
     gt_masked = gt_patches.clone().detach()
+    gt_masked = patchify(gt_masked, patch_size=patch_size)
+    # Convert masked_indices to boolean tensor
     gt_masked[:, masked_indices, :] = -1
+    
 
-    if annotation_patches[0]:
-        annotation_patches = annotation_patches[1].unsqueeze(0)
-        annotation_patches = annotation_patches.to("cpu")
-        annotation_patches = reconstruct_from_patches(annotation_patches, original_image_shape, patch_size)
 
     #recon_recon_patches = torch.zeros(gt_patches.size(0), gt_patches.size(1), requires_grad=False)
     #recon_recon_patches.scatter_(1, masked_indices.unsqueeze(0), recon_patches)
     
-    gt = reconstruct_from_patches(gt_patches, original_image_shape, patch_size)
-    recon = reconstruct_from_patches(recon_patches, original_image_shape, patch_size)
+    #gt = reconstruct_from_patches(gt_patches, original_image_shape, patch_size)
+    #recon = reconstruct_from_patches(recon_patches, original_image_shape, patch_size)
     masked = reconstruct_from_patches(gt_masked, original_image_shape, patch_size)
+    recon = reconstruct_from_patches(recon_patches, original_image_shape, patch_size)
     
-    return gt, annotation_patches, recon, masked
+    return gt_patches.squeeze(0), recon, masked
     
     
 def extract_patches(image_batch, patch_size):
