@@ -348,7 +348,7 @@ class Eva(nn.Module):
         )
         return matcher
 
-    def _pos_embed(self, x) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def _pos_embed(self, x, indices=None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if self.dynamic_img_size:
             raise NotImplementedError("dynamic_img_size is not implemented at the moment")
             B, H, W, C = x.shape
@@ -363,24 +363,38 @@ class Eva(nn.Module):
             x = x.view(B, -1, C)
             rot_pos_embed = self.rope.get_embed(shape=(H, W)) if self.rope is not None else None
         else:
-            pos_embed = self.pos_embed
+            pos_embed = self.pos_embed.repeat(x.shape[0], 1, 1)
+
             rot_pos_embed = self.rope.get_embed() if self.rope is not None else None
+            rot_pos_embed = rot_pos_embed.repeat(x.shape[0], 1, 1)
 
         if pos_embed is not None:
-            x = x + pos_embed
+            if indices is not None:
+                pos_embed = torch.gather(pos_embed, dim=1, index=indices.unsqueeze(-1).repeat(1, 1, pos_embed.shape[-1]))
+            cls = x[:, :1, :]
+            remaining = x[:, 1:, :] + pos_embed
+            x = torch.cat((cls, remaining), dim=1)
         x = self.pos_drop(x)
 
         # obtain shared rotary position embedding and apply patch dropout
-        if self.patch_drop is not None:
-            x, keep_indices = self.patch_drop(x)
-            if rot_pos_embed is not None and keep_indices is not None:
-                rot_pos_embed = apply_keep_indices_nlc(x, rot_pos_embed, keep_indices)
-            return x, rot_pos_embed, keep_indices
-        else:
-            return x, rot_pos_embed, None
+        # if self.patch_drop is not None:
+        #     x, keep_indices = self.patch_drop(x)
+        #     if rot_pos_embed is not None and keep_indices is not None:
+        #         rot_pos_embed = apply_keep_indices_nlc(x, rot_pos_embed, keep_indices)
+        #     return x, rot_pos_embed, keep_indices
+        # else:
+        #     return x, rot_pos_embed, None
 
-    def forward_features(self, x):
-        x, rot_pos_embed, keep_indices = self._pos_embed(x)
+        if indices is not None:
+            rot_pos_embed = torch.gather(rot_pos_embed, dim=1, index=indices.unsqueeze(-1).repeat(1, 1, rot_pos_embed.shape[-1]))
+        cls_rot_pos_embed = torch.ones((rot_pos_embed.shape[0], 1, rot_pos_embed.shape[-1]), device=rot_pos_embed.device, dtype=rot_pos_embed.dtype)
+        cls_rot_pos_embed[:, :, rot_pos_embed.shape[-1] // 2:] = 0.0
+        rot_pos_embed = torch.cat((cls_rot_pos_embed, rot_pos_embed), dim=1)
+
+        return x, rot_pos_embed, None
+
+    def forward_features(self, x, indices):
+        x, rot_pos_embed, keep_indices = self._pos_embed(x, indices)
         for blk in self.blocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 x = checkpoint(blk, x, rope=rot_pos_embed)
@@ -389,9 +403,9 @@ class Eva(nn.Module):
         x = self.norm(x)
         return x, keep_indices
 
-    def forward(self, x):
-        x, keep_indices = self.forward_features(x)
-        return x, keep_indices
+    def forward(self, x, indices=None):
+        x, _ = self.forward_features(x, indices)
+        return x
 
 
 class Primus(AbstractDynamicNetworkArchitectures):
