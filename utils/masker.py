@@ -40,7 +40,7 @@ class Masker:
         """
         mask, ids_restore, ids_keep = self.masking_strategy(input_size=x.shape, device=x.device, roi_mask=roi_mask)
         x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, x.shape[-1]))
-        return x_masked, mask, ids_restore
+        return x_masked, mask, ids_restore, ids_keep
     
     def call_masking_fctn(self, x, fctn_name, **kwargs):
         fctn = eval(f"self.{fctn_name}")

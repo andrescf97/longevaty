@@ -13,7 +13,7 @@ class ViT(nn.Module):
                  norm_layer=None, act_layer=None):
         super().__init__()
 
-        self.pos_embed = build_3d_sincos_position_embedding(grid_size, embed_dim, add_cls=True)
+        self.pos_embed = build_3d_sincos_position_embedding(grid_size, embed_dim, add_cls=False)
 
         self.embed_dim = embed_dim
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
@@ -45,12 +45,17 @@ class ViT(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
 
-    def _pos_embed(self, x, indices):
-        pos_embed = torch.take_along_dim(self.pos_embed, indices, dim=1)
-        x = x + pos_embed
+    def _pos_embed(self, x, indices=None):
+        pos_embed = self.pos_embed.repeat(x.shape[0], 1, 1)
+        if indices is not None:
+            pos_embed = torch.gather(pos_embed, dim=1, index=indices.unsqueeze(-1).repeat(1, 1, self.pos_embed.shape[-1]))
+        cls = x[:, :1, :]
+        remaining = x[:, 1:, :] + pos_embed
+        x = torch.cat((cls, remaining), dim=1)
         x = self.pos_drop(x)
+        return x
 
-    def forward(self, x, indices):
+    def forward(self, x, indices=None):
         x = self._pos_embed(x, indices)
 
         for blk in self.blocks:

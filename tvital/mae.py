@@ -75,8 +75,10 @@ class Vital(nn.Module):
                              mask_ratio=mask_ratio,
                              grid_size=grid_size)
         self.down_projection = PatchEmbed(patch_size, input_channels=1, embed_dim=enc_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, enc_dim)) #TODO: check if this is needed
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, enc_dim))
         self.mask_token = nn.Parameter(torch.zeros(1, 1, dec_dim))
+
+        self.up_sample = nn.Linear(dec_dim, np.prod(patch_size))
 
     def initialize_parameters(self):        
         # Initialize (and freeze) pos_embed by sin-cos embedding
@@ -101,26 +103,69 @@ class Vital(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def patch_embed(self, x):
-        FW, FH, FD = x.shape[2:]  # Full W , ...
+        FD, FW, FH = x.shape[2:]  # Full W , ...
         x = self.down_projection(x)
-        B, C, W, H, D = x.shape
+        B, C, D, W, H = x.shape
         num_patches = W * H * D
 
-        x = rearrange(x, "b c w h d -> b (w h d) c")
-        return x
+        x = rearrange(x, "b c d w h -> b (d w h) c")
+        return x, FD, FW, FH
 
-    def forward(self, x, selected_indices, masked_indices):
-        x = self.patch_embed(x)
-        #CLS
-        #MASKING
-        self.masker
-        imgs = torch.take_along_dim(x, selected_indices, dim=1)
-        imgs = self.encoder(imgs, selected_indices)
-        imgs = self.encoding_projection(imgs)
+    def restore_image(self, x, D, W, H):
+        x = rearrange(x, "b (d w h) c -> b c d w h", h=H, w=W, d=D)
 
-        masked_tokens = self.mask_token.repeat(imgs.shape[0], len(masked_indices), 1)
-        all_embeddings = torch.cat((imgs, masked_tokens), dim=1)
-        all_indices = torch.cat([selected_indices, masked_indices], dim=1)
 
-        shuffled_recon_image = self.decoder(all_embeddings, all_indices)
-        return shuffled_recon_image[:, 1:, :]
+    def forward(self, x):
+        x, FD, FW, FH = self.patch_embed(x)
+        x_masked, mask, ids_restore, ids_keep = self.masker(x)
+        cls_token = self.cls_token.expand(x_masked.shape[0], -1, -1)
+        x_masked = torch.cat([cls_token, x_masked], dim=1)
+
+        x_masked = self.encoder(x_masked, ids_keep)
+        x_masked = self.encoding_projection(x_masked)
+
+        masked_tokens = self.mask_token.repeat(x_masked.shape[0], ids_restore.shape[1] + 1 - x_masked.shape[1], 1)
+        all_embeddings = torch.cat((x_masked[:, 1:, :], masked_tokens), dim=1)
+        all_embeddings = torch.gather(all_embeddings, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_masked.shape[2]))
+        all_embeddings = torch.cat((x_masked[:, :1, :], all_embeddings), dim=1)
+
+        recon_seq = self.decoder(all_embeddings)
+        recon_seq = self.up_sample(recon_seq)
+        return recon_seq[:, 1:, :]
+    
+
+def patchify(im: torch.Tensor, patch_size: list[int, int, int] = [5, 16, 16]):
+    """Split image into patches of size patch_size.
+
+    im: [B, S, T, H, W]
+    patch_size: a list of 3
+    x: [B, L, np.prod(patch_size)] where L = S * T * H * W / np.prod(patch_size)
+    """
+    assert len(im.shape) == 5
+    assert len(patch_size) == 3
+
+    B, S, T, H, W = im.shape
+    t, h, w = T // patch_size[0], H // patch_size[1], W // patch_size[2]
+    x = im.reshape(B, S, t, patch_size[0], h, patch_size[1], w, patch_size[2])
+    x = torch.einsum("bstphqwr->bsthwpqr", x)
+    x = x.reshape(B, S * t * h * w, np.prod(patch_size))
+    return x
+
+
+def unpatchify(x: torch.Tensor, im_shape: list[int], patch_size: list[int, int, int] = [5, 16, 16]):
+    """Combine patches into image.
+
+    x: [B, L, np.prod(patch_size) or T * np.prod(patch_size)]
+    im_shape: [B, S, T, X, Y]
+    im: [B, S, T, X, Y] where X = Y
+    """
+    assert len(x.shape) == 3
+    assert len(patch_size) == 3
+    assert len(im_shape) == 5
+
+    B, S, T, H, W = im_shape
+    t, h, w = T // patch_size[0], H // patch_size[1], W // patch_size[2]
+    x = x.reshape(B, S, t, h, w, patch_size[0], patch_size[1], patch_size[2])
+    x = torch.einsum("bsthwpqr->bstphqwr", x)
+    im = x.reshape(im_shape)
+    return im
