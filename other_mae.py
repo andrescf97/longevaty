@@ -62,15 +62,15 @@ def main(cfg: DictConfig):
 
     train_ds = Dataset(data=monai_dict_train, transform=train_transforms)
     dev_ds = Dataset(data=monai_dict_dev, transform=dev_transforms)
-
+    
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=cfg.training.shuffle, 
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                              persistent_workers=True, pin_memory=True, drop_last=True,
+                              persistent_workers=True, pin_memory=True,
                               generator=dataset_gnr)
-    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=True,
+    dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, pin_memory=True, drop_last=True,
+                        persistent_workers=True, pin_memory=True,
                         generator=dev_dataset_gnr)
 
     model = Vital(
@@ -93,11 +93,11 @@ def main(cfg: DictConfig):
     
     model = model.to(device)
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.init_lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
     if cfg.optimizer.lr_scheduler == 'onecycle':
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
-                                                    epochs=cfg.training.epochs, steps_per_epoch=(len(train_loader) // cfg.training.batch_size),
-                                                    pct_start=cfg.optimizer.pct_start)
+                                                    epochs=cfg.training.epochs, steps_per_epoch=len(train_loader),
+                                                    pct_start=cfg.optimizer.pct_start, div_factor=cfg.optimizer.div_factor, final_div_factor=cfg.optimizer.final_div_factor)
     else:
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
@@ -138,15 +138,15 @@ def main(cfg: DictConfig):
                 print(f"{epoch + 1} / {cfg.training.epochs}: step {step + 1}/{len(train_loader)}, loss {loss}")
                 wandb.log({"train/loss_step": loss})
 
-        if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
-            if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
-                log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
-                            epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
-                counter_cancer += 1
-            if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
-                log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
-                            epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
-                counter_healthy += 1
+            if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+                if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='train')
+                    counter_cancer += 1
+                if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
+                    log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='train')
+                    counter_healthy += 1
 
 
         model.eval()
@@ -158,27 +158,28 @@ def main(cfg: DictConfig):
                 for step, batch in enumerate(dev_loader):
                     recon_image, loss, masked_indices = step_fn(batch, model, loss_fn, device, cfg.model.patch_size)
                     running_loss_dev += loss.item()
-                if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
-                    if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
-                        log_images_3d(batch['image'], recon_image, masked_indices, cfg.patch_size,
-                                    epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='dev')
-                        counter_cancer += 1
-                    if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
-                        log_images_3d(batch['image'], recon_image, masked_indices, cfg.patch_size,
-                                    epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='dev')
-                        counter_healthy += 1
+                    if to_visualize_images_epoch(epoch, cfg.training.epochs, cfg.log.log_scans_at_these_epochs):
+                        if torch.where(batch['y'] == 1)[0].numel() > 0 and counter_cancer < cfg.log.cancer_cases_to_log:
+                            log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                        epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 1)[0][0], mode='dev')
+                            counter_cancer += 1
+                        if torch.where(batch['y'] == 0)[0].numel() > 0 and counter_healthy < cfg.log.healthy_cases_to_log:
+                            log_images_3d(batch['image'], recon_image, masked_indices, cfg.model.patch_size,
+                                        epoch, batch['pid'], batch['screen_timepoint'], batch['y'], batch_index=torch.where(batch['y'] == 0)[0][0], mode='dev')
+                            counter_healthy += 1
             total_loss_dev = running_loss_dev / len(dev_loader)
             print(f"Epoch {epoch + 1}. Val loss: {total_loss_dev}")
             wandb.log({
                     "train/loss_epoch": running_loss_train / len(train_loader),
                     "dev/loss_epoch": running_loss_dev / len(dev_loader),
                     "epoch": epoch,
-                    "learning_rate": optimizer.param_groups[0]['lr']
                         })
 
         if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
             if total_loss <= best_loss:
-                save_dest = os.path.join(cfg.log.ckpt_loc, f"mae_{wandb.run.name}.ckpt")
+                save_dest = os.path.join(cfg.log.ckpt_loc, f"{wandb.run.name}.ckpt")
+                if not os.path.exists(cfg.log.ckpt_loc):
+                    os.makedirs(cfg.log.ckpt_loc)
                 save_checkpoint(save_dest, model, epoch, optimizer, scheduler, scaler)
                 best_loss = total_loss
 

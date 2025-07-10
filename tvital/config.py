@@ -65,6 +65,8 @@ class OptimizerConfig:
     init_lr: float = 1e-5 
     end_lr: float = 1e-6
     warmup_epochs: int = 5
+    div_factor: int = 100
+    final_div_factor: int = 100
 
 class WeightingStrategy(Enum):
     heirarchical = 0

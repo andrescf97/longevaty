@@ -53,7 +53,7 @@ log:
     ckpt_load: 'vit-last'
     checkpoint_at_epoch: 1000
     log_at_these_steps: 100
-    log_scans_at_these_epochs: 5
+    log_scans_at_these_epochs: 10
     use_checkpoint: 'test'
     num_predictions: 20
 
