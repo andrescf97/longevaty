@@ -52,6 +52,9 @@ def main(cfg: DictConfig):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
         
+    monai_dict_train = monai_dict_train[:1]
+    monai_dict_train = monai_dict_train[:1]
+    
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
@@ -186,11 +189,10 @@ def main(cfg: DictConfig):
 
 def step_fn(batch, model, loss_fn, device, patch_size):
     image = batch['image'].to(device)
-    
-    recon_seq, mask = model(image)
+    recon_seq, mask, ids_keep = model(image)
     img_seq = patchify(image, patch_size) 
-    loss = loss_fn(img_seq, recon_seq)
-    return recon_seq, loss, mask
+    loss = loss_fn(img_seq[mask.bool()], recon_seq[mask.bool()])
+    return recon_seq, loss, ids_keep
             
 
 def get_mask_patches(batch, gnr, selected_ct_len):
