@@ -52,8 +52,6 @@ def main(cfg: DictConfig):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
         
-    monai_dict_train = monai_dict_train[:1]
-    monai_dict_train = monai_dict_train[:1]
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
@@ -96,12 +94,13 @@ def main(cfg: DictConfig):
     
     model = model.to(device)
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
     if cfg.optimizer.lr_scheduler == 'onecycle':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
                                                     epochs=cfg.training.epochs, steps_per_epoch=len(train_loader),
                                                     pct_start=cfg.optimizer.pct_start, div_factor=cfg.optimizer.div_factor, final_div_factor=cfg.optimizer.final_div_factor)
     else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.peak_lr)
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=1,
@@ -189,11 +188,13 @@ def main(cfg: DictConfig):
 
 def step_fn(batch, model, loss_fn, device, patch_size):
     image = batch['image'].to(device)
-    recon_seq, mask, ids_keep = model(image)
+    
+    recon_seq, mask = model(image)
     img_seq = patchify(image, patch_size) 
-    loss = loss_fn(img_seq[mask.bool()], recon_seq[mask.bool()])
-    return recon_seq, loss, ids_keep
-            
+    loss = loss_fn(img_seq, recon_seq)
+    loss = loss.mean(-1)
+    loss = (loss * mask).sum() / mask.sum()     
+    return recon_seq, loss, mask.bool()
 
 def get_mask_patches(batch, gnr, selected_ct_len):
     sequence_len = batch['image'].shape[1]
@@ -206,7 +207,7 @@ def get_mask_patches(batch, gnr, selected_ct_len):
     selected_indices = shuffled_indices_only_lung.cpu().numpy()[:selected_ct_len]
     masked_indices = np.setdiff1d(np.arange(sequence_len), selected_indices)
     masked_indices = torch.tensor(masked_indices)
-    selected_indices = torch.tensor(selected_indices)
+    selected_indices = torch.tensor(selected_indices)           
 
     return selected_indices, masked_indices, shuffled_indices_only_lung
 

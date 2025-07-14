@@ -131,7 +131,7 @@ class Vital(nn.Module):
 
         recon_seq = self.decoder(all_embeddings)
         recon_seq = self.up_sample(recon_seq)
-        return recon_seq[:, 1:, :], ids_restore
+        return recon_seq[:, 1:, :], mask
     
 
 def patchify(im: torch.Tensor, patch_size: list[int, int, int] = [5, 16, 16]):
