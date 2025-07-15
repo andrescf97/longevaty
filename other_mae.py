@@ -17,8 +17,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from monai.utils import set_determinism, first
 from monai.transforms import RandRotated
 
-#from data.transformation import MaskPatchesd
-#from models.min_mae import MAE, build_3d_sincos_position_embedding
 from tools.recon_visualize import visualized_images
 from tools.checkpointing import save_checkpoint, load_checkpointed_state
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint, to_visualize_images_epoch
@@ -51,7 +49,6 @@ def main(cfg: DictConfig):
         monai_dict_train = json.load(fp)
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
-        
     
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
@@ -93,7 +90,7 @@ def main(cfg: DictConfig):
                     )
     
     model = model.to(device)
-    loss_fn = nn.MSELoss()
+    loss_fn = nn.MSELoss(reduction='none')
     if cfg.optimizer.lr_scheduler == 'onecycle':
         optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
@@ -177,7 +174,7 @@ def main(cfg: DictConfig):
                     "epoch": epoch,
                         })
 
-        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch):
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
             if total_loss <= best_loss:
                 save_dest = os.path.join(cfg.log.ckpt_loc, f"{wandb.run.name}.ckpt")
                 if not os.path.exists(cfg.log.ckpt_loc):
