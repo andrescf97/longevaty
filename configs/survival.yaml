@@ -1,10 +1,10 @@
-defaults:
-  - base_config
-  - _self_
+# defaults:
+#   - base_config
+#   - _self_
 
 wandb:
-    dry_run: True
-    project_name: "survival-jax"
+    dry_run: False
+    project_name: "survival-torch"
     task: "mae"
     entity: "mri-ai-lab"
 
@@ -27,46 +27,48 @@ data:
 
 
 training:
+    use_amp: True
     dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
-    num_workers: 8
-    dev_num_workers: 6
+    num_workers: 2
+    dev_num_workers: 2
     test_num_workers: 1
     prefetch_factor: 8
     dev_prefetch_factor: 4
-    shuffle: True
+    shuffle: False
     epochs: 50
-    batch_size: 4
+    batch_size: 16
     accumulation_steps: 8
     to_checkpoint: False
     underrepresented_weight: 14
-    sampler: "stratified"
+    sampler: "weighted"
     minority_samples_per_batch: 1
     freeze_encoder: True
     freeze_mha: False
+    resume: False
 
 optimizer:
-    lr_scheduler: onecycle
-    peak_lr: 8e-6
-    init_lr: 8e-6
-    end_lr: 8e-6
-    warmup_epochs: 0
+    lr_scheduler: constant
+    peak_lr: 3e-4
+    div_factor: 100
+    final_div_factor: 1000
+    pct_start: 0.1
 
 attention:
     heads: 4
-    use_cls: False
-    use_mean_token: True
+    use_cls: True
+    use_mean_token: False
 
 loss:
     sw: 10
     aw: 1
 
 log:
-    ckpt_loc: "/pool/data/lung/checkpoints/lungevity"
-    ckpt_load_loc: "/pool/data/lung/checkpoints/mae/"
+    ckpt_loc: "/pool/data/lung/NLST/checkpoints/survival"
+    ckpt_load_loc: "/pool/data/lung/NLST/checkpoints/mae-copy"
     mae_ckpt_load: 'vit-last'
-    mae_use_checkpoint: 'dazzling-oath-201'
+    mae_use_checkpoint: 'warm-puddle-372.ckpt'
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit'
@@ -77,17 +79,23 @@ log:
     num_predictions: 20
 
 model:
-    patch_size: 16
-    enc_dim: 1296
-    dec_dim: 648
+    transformer: 'eva'
+    patch_size: [16,16,16]
+    enc_dim: 792
+    dec_dim: 396
     dropout_rate: 0.1
-    enc_heads: 16
-    enc_depth: 32
+    enc_heads: 12
+    enc_depth: 12
     dec_heads: 6
     dec_depth: 4
     in_chans: 1
     rng: 24
+    num_reg_tokens: 0 # We do not use EVA's register tokens, only our CLS token
+    use_cls: True
+    use_mean_token: False
+    guided_attention_heads: 4
     fusion_layer: False
+
 
 # model:
 #     patch_size: 16
@@ -160,11 +168,8 @@ transform:
             prob: 0.33
             mean: 0
             std: 0.1
-        MaskPatchesd_our:
-            keys: ['mask']
-            patch_size: [16, 16, 16]
-            hull_only: False
-            use_annotations: True
+        Permuted_our:
+            keys: ['image', 'annotation']
         ToTensord:
             keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
@@ -188,11 +193,8 @@ transform:
             keys: ['image', 'annotation']
             allow_missing_keys: True 
             device: "cuda"
-        MaskPatchesd_our:
-            keys: ['mask']
-            patch_size: [16, 16, 16]
-            hull_only: False
-            use_annotations: True
+        Permuted_our:
+            keys: ['image', 'annotation']
         ToTensord:
             keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
@@ -213,16 +215,13 @@ transform:
             spatial_size: [160, 240, 128]
             allow_missing_keys: True
         ToDeviced:
-            keys: ['image']
-            allow_missing_keys: True 
+            keys: ['image', 'annotation']
+            allow_missing_keys: True
             device: "cuda"
-        MaskPatchesNoPopd_our:
-            keys: ['mask']
-            patch_size: [16, 16, 16]
-            hull_only: False
-            use_annotations: True
+        Permuted_our:
+            keys: ['image', 'annotation']
         ToTensord:
-            keys: ['image']
+            keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
             track_meta: False
             device: "cuda"

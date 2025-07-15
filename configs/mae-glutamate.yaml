@@ -19,9 +19,9 @@ data:
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
     data_root: "/pool/data/lung/NLST/npy"
-    monai_dict_train: "/pool/data/lung/NLST/json/mae_train.json"
-    monai_dict_dev: "/pool/data/lung/NLST/json/mae_dev.json"
-    monai_dict_test: "/pool/data/lung/NLST/json/mae_test.json"
+    monai_dict_train: "/pool/data/lung/NLST/json/mae_train_stub.json"
+    monai_dict_dev: "/pool/data/lung/NLST/json/mae_dev_stub.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/mae_test_stub.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -43,20 +43,20 @@ training:
 
 optimizer:
     lr_scheduler: onecycle
-    peak_lr: 1e-3
+    peak_lr: 1e-4
     div_factor: 100
     final_div_factor: 1000
     pct_start: 0.1
 
 log:
-    ckpt_loc: "/pool/data/lung/NLST/checkpoints/mae"
+    ckpt_loc: "/pool/data/lung/NLST/checkpoints/mae/"
     ckpt_best: 'vit'
     ckpt_last: 'vit-last'
     ckpt_load: 'vit-last'
     checkpoint_at_epoch: 2
     log_at_these_steps: 500
     log_scans_at_these_epochs: 10
-    use_checkpoint: 'test_test'
+    use_checkpoint: 'quiet-dream-374.ckpt'
     num_predictions: 20
     cancer_cases_to_log: 1
     healthy_cases_to_log: 0
@@ -74,6 +74,7 @@ model:
     in_chans: 1
     rng: 24
     num_reg_tokens: 0 # We do not use EVA's register tokens, only our CLS token
+
 
 transform:
     train_tf:

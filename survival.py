@@ -307,19 +307,20 @@ def dev_step(
 def loss_fn(model, images, annotations, y_seq, y_mask, pos_embed, sw, aw):
     # Survival loss
     n_year_logits, attn_weights = model(images, pos_embed)
-    survival_loss = optax.sigmoid_binary_cross_entropy(n_year_logits, y_seq) * y_mask
+    survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
 
     # Annotation loss
-    annotations_mask = (annotations > 0).any(axis=2)
-    mask_area = annotations.sum(axis=(-1, -2), keepdims=True)
-    mask_area = jnp.where(mask_area == 0, 1, mask_area)
-    annotations = annotations.sum(axis=-1, keepdims=True) / mask_area
+    annotations_mask = (annotations > 0).any(dim=2)
+    mask_area = annotations.sum(dim=(-1, -2), keepdim=True)
+    mask_area = torch.where(mask_area == 0, torch.ones_like(mask_area), mask_area)
+    annotations = annotations.sum(dim=-1, keepdim=True) / mask_area
     annotations = annotations.squeeze()
 
-    annotation_loss = (optax.l2_loss(attn_weights, annotations) * annotations_mask).sum(axis=-1)
+    annotation_loss = (F.mse_loss(attn_weights, annotations, reduction='none') * annotations_mask).sum(dim=-1)
     annotation_loss = annotation_loss.mean()
-    return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, jax.nn.sigmoid(n_year_logits))
+    
+    return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
 
 def collate_fn(batch):
     batch = pd.DataFrame(batch).to_dict(orient="list")

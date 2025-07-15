@@ -110,7 +110,7 @@ def main(cfg: DictConfig):
     
     best_loss = np.inf
     if cfg.training.resume == True:
-        start_epoch = load_checkpointed_state(cfg.log.ckpt_loc, cfg.log.use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.learning_rate)
+        start_epoch = load_checkpointed_state(cfg.log.ckpt_loc, cfg.log.use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.optimizer.peak_lr)
     else:
         start_epoch = 0
 
