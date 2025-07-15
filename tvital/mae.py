@@ -35,7 +35,7 @@ class Vital(nn.Module):
                 patch_drop_rate=0.0,
                 proj_drop_rate=0.0,
                 attn_drop_rate=0.0,
-                drop_path_rate=0.0,
+                drop_path_rate=dropout_rate,
                 ref_feat_shape=grid_size,
                 num_reg_tokens=0,  # Assuming 1 prefix ("cls") token for the encoder
             )
