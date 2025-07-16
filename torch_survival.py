@@ -29,14 +29,7 @@ from torch import Generator
 from torch.utils.data import WeightedRandomSampler
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
-from flax import nnx
-import jax
-import jax.numpy as jnp
 import numpy as np
-import pandas as pd
-import optax
-import orbax.checkpoint as ocp
-from dlpack import asdlpack
 from omegaconf import DictConfig, OmegaConf
 import torch
 import torch.nn.functional as F
@@ -49,7 +42,7 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
 device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="survival.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="survival-torch.yaml")
 def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
@@ -64,13 +57,7 @@ def main(cfg: DictConfig):
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
-    dataset_gnr = torch.Generator(device="cpu")
-    dataset_gnr.manual_seed(0)
-    dev_dataset_gnr = torch.Generator(device="cpu")
-    dev_dataset_gnr.manual_seed(0)
-    
     train_censoring_distribution = get_censoring_dist(monai_dict_train)
-
 
     train_ds = Dataset(data=monai_dict_train, transform=train_transforms)
     dev_ds = Dataset(data=monai_dict_dev, transform=dev_transforms)
@@ -100,16 +87,15 @@ def main(cfg: DictConfig):
             drop_last=True
         )
     
-    
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=cfg.training.shuffle, 
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
                               persistent_workers=True, pin_memory=False,
-                              generator=dataset_gnr, drop_last=True, sampler=sampler)
+                              drop_last=True, sampler=sampler)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
                         persistent_workers=True, pin_memory=False,
-                        generator=dev_dataset_gnr, drop_last=True) #TODO drop last
+                        drop_last=True)
 
     model = Lungevity(
         transformer=cfg.model.transformer,
@@ -133,7 +119,6 @@ def main(cfg: DictConfig):
                     )
     
     model = model.to(device)
-    #model = model.to(torch.bfloat16)  # Convert entire model to bfloat16
     if cfg.optimizer.lr_scheduler == 'onecycle':
         optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
@@ -146,9 +131,8 @@ def main(cfg: DictConfig):
             step_size=1,
             gamma=1.0
         )
-    scaler = torch.amp.grad_scaler.GradScaler(device=device, enabled=cfg.training.use_amp) 
+    scaler = torch.GradScaler(device=device, enabled=cfg.training.use_amp) 
     
-    best_loss = np.inf
     if cfg.training.resume == True:
         start_epoch = load_checkpointed_state(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint, device, model, optimizer, scheduler, scaler, cfg.paek_lr)
     else:
@@ -156,18 +140,8 @@ def main(cfg: DictConfig):
         checkpoint = torch.load(os.path.join(cfg.log.ckpt_load_loc, cfg.log.mae_use_checkpoint), map_location=device)
         model.load_state_dict(checkpoint['model'], strict=False)
 
-
-    # Position embeddings
-    img_size = cfg.data.img_size
-    grid_size = [
-        img_size[0] / cfg.model.patch_size[0],
-        img_size[1] / cfg.model.patch_size[1],
-        img_size[2] / cfg.model.patch_size[2]
-    ]
-    # pos_embed = build_3d_sincos_position_embedding(cfg.training.batch_size, grid_size, embed_dim=cfg.model.enc_dim, dtype=dtype)
-    
-    steps_per_epoch = len(train_loader)
-    dev_steps_per_epoch = len(dev_loader)
+    steps_per_epoch = len(sampler) // cfg.training.batch_size
+    dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
 
     # # Init running value arrays
     probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
@@ -190,7 +164,7 @@ def main(cfg: DictConfig):
         for step, batch in enumerate(train_loader):
             images, annotations, y_seq, y_mask = batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask']
             
-            state, loss, segregated_loss, _probs = train_step(
+            loss, segregated_loss, _probs = train_step(
                 model, images, annotations, y_seq, y_mask, 
                 (cfg.loss.sw, cfg.loss.aw), optimizer, scaler, cfg.model.patch_size
             )
@@ -217,7 +191,7 @@ def main(cfg: DictConfig):
                 for step, batch in enumerate(dev_loader):
                     images, annotations, y_seq, y_mask = batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask']
                     
-                    state, loss, segregated_loss, _probs = dev_step(
+                    loss, segregated_loss, _probs = dev_step(
                         model, images, annotations, y_seq, y_mask, 
                         (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size
     )
@@ -232,9 +206,9 @@ def main(cfg: DictConfig):
                 survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
                 log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
 
-                if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch) and cfg.training.to_checkpoint:
-                    sum = survival_metrics['dev/1_year_prauc'] + survival_metrics['dev/2_year_prauc'] + survival_metrics['dev/3_year_prauc'] \
-                        + survival_metrics['dev/4_year_prauc'] + survival_metrics['dev/5_year_prauc'] + survival_metrics['dev/6_year_prauc'] 
+                if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
+                    sum = survival_metrics['dev/1_year_auc'] + survival_metrics['dev/2_year_auc'] + survival_metrics['dev/3_year_auc'] \
+                        + survival_metrics['dev/4_year_auc'] + survival_metrics['dev/5_year_auc'] + survival_metrics['dev/6_year_auc'] 
                     if sum >= ckpt_metric:
                         print("Saving checkpoint")
                         
@@ -292,7 +266,7 @@ def train_step(
     scaler.step(optimizer)
     scaler.update()
     
-    return model, loss.item(), (survival_loss.item(), annotation_loss.item()), probs.detach().cpu()
+    return loss.item(), (survival_loss.item(), annotation_loss.item()), probs.detach().cpu()
 
 
 def dev_step(
@@ -317,7 +291,7 @@ def dev_step(
                 loss_weights[0], loss_weights[1]
             )
     
-    return model, loss.item(), (survival_loss.item(), annotation_loss.item()), probs.detach().cpu()
+    return loss.item(), (survival_loss.item(), annotation_loss.item()), probs.detach().cpu()
 
 
 def loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
@@ -338,19 +312,6 @@ def loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
     annotation_loss = annotation_loss.mean()
     
     return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
-
-def collate_fn(batch):
-    batch = pd.DataFrame(batch).to_dict(orient="list")
-    for key in batch:
-        batch[key] = jnp.array(np.stack(batch[key], axis=0), dtype=jnp.bfloat16)
-    return batch
-
-def process_raw_dict(raw_state_dict):
-  flattened = nnx.traversals.flatten_mapping(raw_state_dict)
-  # Cut the '.value' postfix on every leaf path.
-  flattened = {(path[:-1] if path[-1] == 'value' else path): value
-               for path, value in flattened.items()}
-  return nnx.traversals.unflatten_mapping(flattened)
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
