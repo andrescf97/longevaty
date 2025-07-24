@@ -123,6 +123,53 @@ class Patchify(transforms.MapTransform):
 
         return data
     
+class Lateralityd(transforms.MapTransform):
+    def __init__(self, keys, patch_size):
+        super().__init__(keys)
+        self.patch_size = patch_size
+
+    def __call__(self, data):
+        annotation_mask = data["mask"]
+        annotation_mask = annotation_mask - 1
+        annotation_mask[annotation_mask < 0] = 0 #remove hull
+        lobes = False
+
+        laterality = data["cancer_laterality"]
+
+        if laterality[1]:
+            lobes = True
+            label = laterality[1] - 2
+        elif laterality[0] == 3:
+            label = 1 # label 1, lobes False means right lung
+        elif laterality[0] == 4:
+            label = 0 # label 0, lobes False means left lung
+
+        patched_annotation_mask = extract_patches(annotation_mask, self.patch_size).squeeze()
+        has_positive = (patched_annotation_mask > 0).any(dim=1)
+        result = torch.zeros(patched_annotation_mask.size(0), dtype=patched_annotation_mask.dtype, device=patched_annotation_mask.device)
+
+        # Get all unique values > 0 across the tensor
+        unique_pos = torch.unique(patched_annotation_mask[patched_annotation_mask > 0])
+
+        # For rows with positive elements, compute mode among > 0
+        pos_rows = patched_annotation_mask[has_positive]
+        expanded = pos_rows.unsqueeze(-1) == unique_pos
+        counts = expanded.sum(dim=1)
+        max_idx = counts.argmax(dim=1)
+        result[has_positive] = unique_pos[max_idx]
+
+        data["laterality"] = result
+        data['laterality_label'] = label
+        data['lobes'] = lobes
+
+        data.pop("mask")
+        data.pop("series")
+        data.pop("study")
+        data.pop("pid")
+        data.pop("screen_timepoint")
+        data.pop("institution")
+        data.pop("cancer_laterality")
+        return data
     
 class Permuted(transforms.MapTransform):
     def __init__(self, keys):

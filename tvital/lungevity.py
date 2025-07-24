@@ -172,8 +172,8 @@ class Lungevity(nn.Module):
         k = tokens[:, 1:, :]
         v = tokens[:, 1:, :]
 
-        attns, attn_weights = self.mha(q, k, v)
-        return attns.squeeze(axis=1), attn_weights.mean(1).squeeze()
+        attns, attn_weights = self.mha(q, k, v, average_attn_weights=False)
+        return attns.squeeze(axis=1), attn_weights
 
     def __call__(
         self,

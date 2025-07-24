@@ -31,10 +31,10 @@ training:
     dtype: bfloat16
     mask_ratio: 0.5
     seed: 0
-    num_workers: 2
-    dev_num_workers: 2
+    num_workers: 1
+    dev_num_workers: 1
     test_num_workers: 1
-    prefetch_factor: 8
+    prefetch_factor: 4
     dev_prefetch_factor: 4
     shuffle: False
     epochs: 50
@@ -168,6 +168,9 @@ transform:
             prob: 0.33
             mean: 0
             std: 0.1
+        Lateralityd_our:
+            keys: ['annotation']
+            patch_size: [16, 16, 16]
         Permuted_our:
             keys: ['image', 'annotation']
         ToTensord:

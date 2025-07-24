@@ -26,6 +26,7 @@ from tools.checkpointing import save_checkpoint, load_checkpointed_state
 
 from monai.data import Dataset, CacheDataset, ThreadDataLoader
 from torch import Generator
+from torch_scatter import scatter
 from torch.utils.data import WeightedRandomSampler
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
@@ -163,9 +164,11 @@ def main(cfg: DictConfig):
         censors.fill(0)
         for step, batch in enumerate(train_loader):
             images, annotations, y_seq, y_mask = batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask']
+            laterality, laterality_label, lobes = batch['laterality'], batch['laterality_label'], batch['lobes']
             
             loss, segregated_loss, _probs = train_step(
-                model, images, annotations, y_seq, y_mask, 
+                model, images, annotations, laterality, laterality_label, lobes,
+                y_seq, y_mask, 
                 (cfg.loss.sw, cfg.loss.aw), optimizer, scaler, cfg.model.patch_size
             )
             running_loss += loss
@@ -194,7 +197,7 @@ def main(cfg: DictConfig):
                     loss, segregated_loss, _probs = dev_step(
                         model, images, annotations, y_seq, y_mask, 
                         (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size
-    )
+                    )
                     running_loss += loss
                     running_survival_loss += segregated_loss[0]
                     running_annotation_loss += segregated_loss[1]
@@ -240,6 +243,9 @@ def train_step(
         model,
         images: torch.Tensor,
         annotations: torch.Tensor,
+        laterality: torch.Tensor,
+        laterality_label: torch.Tensor,
+        lobes: torch.Tensor,
         y_seq: torch.Tensor,
         y_mask: torch.Tensor,
         loss_weights: tuple,
@@ -252,12 +258,16 @@ def train_step(
     annotations = annotations.to(device, dtype=torch.bfloat16)
     y_seq = y_seq.to(device, dtype=torch.bfloat16)
     y_mask = y_mask.to(device, dtype=torch.bfloat16)
+    laterality_label = laterality_label.to(device)
+    lobes = lobes.to(device)
+    laterality = laterality.to(device, dtype=torch.int64)
     
     optimizer.zero_grad()
     
     with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=True):
         loss, (survival_loss, annotation_loss, probs) = loss_fn(
-            model, images, annotations, patch_size, y_seq, y_mask, 
+            model, images, annotations, laterality, laterality_label, lobes,
+            patch_size, y_seq, y_mask, 
             loss_weights[0], loss_weights[1]
         )
     
@@ -286,7 +296,7 @@ def dev_step(
     
     with torch.no_grad():
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=True):
-            loss, (survival_loss, annotation_loss, probs) = loss_fn(
+            loss, (survival_loss, annotation_loss, probs) = dev_loss_fn(
                 model, images, annotations, patch_size, y_seq, y_mask, 
                 loss_weights[0], loss_weights[1]
             )
@@ -294,23 +304,69 @@ def dev_step(
     return loss.item(), (survival_loss.item(), annotation_loss.item()), probs.detach().cpu()
 
 
-def loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
+def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
+            patch_size, y_seq, y_mask, sw, aw):
     # Survival loss
     n_year_logits, attn_weights = model(images)
     survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
 
     # Annotation loss
-    annotations = patchify(annotations, patch_size) 
-    annotations_mask = (annotations > 0).any(dim=2)
-    mask_area = annotations.sum(dim=(-1, -2), keepdim=True)
-    mask_area = torch.where(mask_area == 0, torch.ones_like(mask_area), mask_area)
-    annotations = annotations.sum(dim=-1, keepdim=True) / mask_area
-    annotations = annotations.squeeze()
+    attn_weights = attn_weights.mean(dim=1)  # Average attention weights across heads
+    attn_weights = attn_weights.mean(dim=1)  # Average attention weights across tokens
+    attn_scores = F.log_softmax(attn_weights, dim=-1)
 
-    annotation_loss = (F.mse_loss(attn_weights, annotations, reduction='none') * annotations_mask).sum(dim=-1)
-    annotation_loss = annotation_loss.mean()
+    annotations = patchify(annotations, patch_size) 
+    annotations_mask = (annotations > 0).any(dim=(1, 2))
+    mask_area = annotations.sum(dim=(-1, -2))
+    mask_area = torch.where(mask_area == 0, 1, mask_area)
+    annotations_gold = annotations.sum(dim=-1) / mask_area[:, None]
+
+    annotation_loss = F.kl_div(attn_scores, annotations_gold, reduction='none') * annotations_mask[:, None]
+    num_annotations = torch.where(annotations_mask.sum() == 0, 1, annotations_mask.sum())
+    annotation_loss = annotation_loss.sum() / num_annotations
+
+    # Side classfication loss
+    id = laterality
+    sides = torch.where(id == 0, 0, torch.where(id < 3, 1, 2))
+
+    ## Lobe loss
+    predictions = scatter(attn_weights, id, dim=1)[:, 1:]
+    labels = torch.where(~lobes, 0, laterality_label)
+    lobe_loss = F.cross_entropy(predictions, labels, reduction='none') * lobes
+    num_lobes = lobes.sum(); num_lobes = torch.where(num_lobes == 0, 1, num_lobes)
+    lobe_loss = lobe_loss.sum() / num_lobes
+
+    ## Side loss
+    side_predictions = scatter(attn_weights, sides, dim=1)[:, 1:]
+    labels = torch.where(lobes, 0, laterality_label)
+    side_loss = F.cross_entropy(side_predictions, labels, reduction='none') * (~lobes)
+    num_sides = (~lobes).sum(); num_sides = torch.where(num_sides == 0, 1, num_sides)
+    side_loss = side_loss.sum() / num_sides
+    annotation_loss += lobe_loss + side_loss
     
+    return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
+
+def dev_loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
+    # Survival loss
+    n_year_logits, attn_weights = model(images)
+    survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
+    survival_loss = survival_loss.sum() / y_mask.sum()
+
+    # Annotation loss
+    attn_weights = attn_weights.mean(dim=1)  # Average attention weights across heads
+    attn_weights = attn_weights.mean(dim=1)  # Average attention weights across tokens
+    attn_scores = F.log_softmax(attn_weights, dim=-1)
+
+    annotations = patchify(annotations, patch_size) 
+    annotations_mask = (annotations > 0).any(dim=(1, 2))
+    mask_area = annotations.sum(dim=(-1, -2))
+    mask_area = torch.where(mask_area == 0, 1, mask_area)
+    annotations_gold = annotations.sum(dim=-1) / mask_area[:, None]
+
+    annotation_loss = F.kl_div(attn_scores, annotations_gold, reduction='none') * annotations_mask[:, None]
+    annotation_loss = annotation_loss.sum() / annotations_mask.sum()
+
     return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
 
 if __name__ == "__main__":
