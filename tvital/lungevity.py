@@ -136,6 +136,7 @@ class Lungevity(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout_rate)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, enc_dim))
+        self.pool_token = nn.Parameter(torch.zeros(1, 1, enc_dim))
         self.down_projection = PatchEmbed(patch_size, input_channels=1, embed_dim=enc_dim)
 
         hidden = hidden_dim
@@ -168,7 +169,8 @@ class Lungevity(nn.Module):
             self,
             tokens: torch.Tensor
     ):
-        q = tokens[:, 0:1, :]
+        B = tokens.shape[0]
+        q = self.pool_token.expand(B, -1, -1)  # [B, 1, D]
         k = tokens[:, 1:, :]
         v = tokens[:, 1:, :]
 
@@ -199,6 +201,8 @@ class Lungevity(nn.Module):
 
         # timm"s trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
         if hasattr(self, "cls_token"):
+            torch.nn.init.normal_(self.cls_token, std=.02)
+        if hasattr(self, "pool_token"):
             torch.nn.init.normal_(self.cls_token, std=.02)
         if hasattr(self, "mask_token"):
             torch.nn.init.normal_(self.mask_token, std=.02)
