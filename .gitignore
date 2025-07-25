@@ -17,3 +17,4 @@ checkpoints
 data/*
 *.json
 /pool/users/braj/mae-jax/.vscode/launch.json
+*.pth
