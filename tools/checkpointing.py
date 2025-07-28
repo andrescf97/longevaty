@@ -34,14 +34,16 @@ def load_checkpointed_state(loc, ckpt_name, device, model, optimizer, scheduler,
     
     return checkpoint['epochs'] + 1
 
-def save_checkpoint(loc, model, epoch, optimizer, scheduler, scaler):
+def save_checkpoint(loc, file_name, model, epoch, optimizer, scheduler, scaler, ckpt_metric, step):
     checkpoint = {
         "epochs": epoch,
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict(),
-        "scaler": scaler.state_dict()
+        "scaler": scaler.state_dict(),
+        "ckpt_metric": ckpt_metric,
+        "save_step": step + 1,
     }
 
-    with open(loc, "wb") as fp:
+    with open(os.path.join(loc, file_name), "wb") as fp:
         torch.save(checkpoint, fp)

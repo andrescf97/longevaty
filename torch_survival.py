@@ -47,8 +47,14 @@ device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.
 def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
-        
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
+
+    if wandb.run.name is None:
+        name = "test"
+    else:
+        name = wandb.run.name
+    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, name)
+    os.makedirs(ckpt_root_dir, exist_ok=True)
 
     with open(cfg.data.monai_dict_train) as fp:
         monai_dict_train = json.load(fp)
@@ -185,57 +191,44 @@ def main(cfg: DictConfig):
                 wandb.log({"train/annotation_loss": segregated_loss[1]})
                 wandb.log({"lr": optimizer.param_groups[0]['lr']})
 
-                # Dev
-                running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
-                dev_probs.fill(0)
-                dev_golds.fill(0)
-                dev_censors.fill(0)
-                model.eval()
-                for step, batch in enumerate(dev_loader):
-                    images, annotations, y_seq, y_mask = batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask']
-                    
-                    loss, segregated_loss, _probs = dev_step(
-                        model, images, annotations, y_seq, y_mask, 
-                        (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size
-                    )
-                    running_loss += loss
-                    running_survival_loss += segregated_loss[0]
-                    running_annotation_loss += segregated_loss[1]
-                    dev_probs[step, :, :] = np.array(_probs)
-                    dev_golds[step, :] = batch['y'].numpy()
-                    dev_censors[step, :] = batch['time_at_event'].numpy()
-
-                wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-                survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
-                log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
-
-                if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
-                    sum = survival_metrics['dev/1_year_auc'] + survival_metrics['dev/2_year_auc'] + survival_metrics['dev/3_year_auc'] \
-                        + survival_metrics['dev/4_year_auc'] + survival_metrics['dev/5_year_auc'] + survival_metrics['dev/6_year_auc'] 
-                    if sum >= ckpt_metric:
-                        print("Saving checkpoint")
-                        
-                        # Create checkpoint dictionary
-                        checkpoint = {
-                            'epoch': epoch,
-                            'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                            'scheduler_state_dict': scheduler.state_dict(),
-                            'scaler_state_dict': scaler.state_dict(),
-                            'ckpt_metric': sum,
-                            'save_step': save_step + 1
-                        }
-        
-                    # Save checkpoint
-                    checkpoint_path = f"{cfg.log.ckpt_loc}/best_checkpoint_step_{save_step + 1}.pth"
-                    torch.save(checkpoint, checkpoint_path)
-                    
-                    ckpt_metric = sum
-                    save_step += 1
-
         wandb.log({"train/loss": running_loss / steps_per_epoch})
         compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="train")
         log_targets(probs, golds, censors, cfg.log.num_predictions, "train")
+
+        # Dev
+        running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
+        dev_probs.fill(0)
+        dev_golds.fill(0)
+        dev_censors.fill(0)
+        model.eval()
+        for step, batch in enumerate(dev_loader):
+            images, annotations, y_seq, y_mask = batch['image'], batch['annotation'], batch['y_seq'], batch['y_mask']
+            
+            loss, segregated_loss, _probs = dev_step(
+                model, images, annotations, y_seq, y_mask, 
+                (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size
+            )
+            running_loss += loss
+            running_survival_loss += segregated_loss[0]
+            running_annotation_loss += segregated_loss[1]
+            dev_probs[step, :, :] = np.array(_probs)
+            dev_golds[step, :] = batch['y'].numpy()
+            dev_censors[step, :] = batch['time_at_event'].numpy()
+
+        wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
+        survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
+        log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
+
+        if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
+            sum = survival_metrics['dev/1_year_auc'] + survival_metrics['dev/2_year_auc'] + survival_metrics['dev/3_year_auc'] \
+                + survival_metrics['dev/4_year_auc'] + survival_metrics['dev/5_year_auc'] + survival_metrics['dev/6_year_auc'] 
+            if sum >= ckpt_metric:
+                file_name = f"best.pt"
+                ckpt_metric = sum
+                save_checkpoint(ckpt_root_dir, file_name, model, epoch, optimizer, scheduler, scaler, ckpt_metric, save_step)
+                save_step += 1
+            file_name = f"last.pt"
+            save_checkpoint(ckpt_root_dir, file_name, model, epoch, optimizer, scheduler, scaler, sum, save_step)
 
     return
 
