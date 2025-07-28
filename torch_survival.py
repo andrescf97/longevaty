@@ -43,7 +43,7 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
 device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="survival-torch.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="survival.yaml")
 def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"

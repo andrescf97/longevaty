@@ -168,11 +168,11 @@ transform:
             prob: 0.33
             mean: 0
             std: 0.1
+        Permuted_our:
+            keys: ['image', 'annotation', 'mask']
         Lateralityd_our:
             keys: ['annotation']
             patch_size: [16, 16, 16]
-        Permuted_our:
-            keys: ['image', 'annotation']
         ToTensord:
             keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
