@@ -1,48 +1,41 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
+os.environ['XLA_FLAGS'] = (
+    '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_enable_latency_hiding_scheduler=true '
+)
+
 
 import hydra
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from tqdm import tqdm
 
 import wandb
 import json
-import math
 
-from tvital.sybil import SybilNet
-from tvital.config import Config, load_config_store, LRScheduler
-from vital.sampler import DeterministicImbalancedSampler
 from vital.transformations import make_transformations
 
 from vital.metrics import get_censoring_dist, compute_and_log_metrics_risk, log_targets
 from tools.loop_conditions import to_log, to_visualize_images, to_save_checkpoint
-from tvital.checkpointing import load_checkpointed_state, save_checkpoint
+from tools.checkpointing import load_checkpointed_state, save_checkpoint
 
-
-from tvital.model import Longevity, build_rel_time_embeddings
+from tvital.lungevity import Lungevity, patchify
 
 from monai.data import Dataset
-from monai.transforms import PadListDataCollate
 import torch
 import torch.nn.functional as F
-from torch.amp import GradScaler
-from torch import Generator
-from torch.utils.data import WeightedRandomSampler
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
 import numpy as np
-import pandas as pd
 
 import resource
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
-load_config_store()
+device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-@hydra.main(config_path="./configs", config_name='others-test.yaml', version_base=None)
-def main(cfg: Config):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
+@hydra.main(config_path="./configs", config_name='survival-torch-test.yaml', version_base=None)
+def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
     wandb.init(entity=cfg.wandb.entity, project=cfg.wandb.project_name, config=OmegaConf.to_container(cfg))
@@ -51,7 +44,6 @@ def main(cfg: Config):
         name = "test"
     else:
         name = wandb.run.name
-    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, name)
 
     # Data
     with open(cfg.data.monai_dict_train) as fp:
@@ -66,18 +58,39 @@ def main(cfg: Config):
     test_ds = Dataset(data=monai_dict_test, transform=test_transforms)
 
     test_loader = DataLoader(test_ds, batch_size=cfg.training.batch_size, shuffle=False,
-                        num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, pin_memory=False, drop_last=False)
+                        num_workers=0, prefetch_factor=None,
+                        persistent_workers=False, pin_memory=False, drop_last=False)
 
-    model = SybilNet.load("/pool/users/chev/Sybil/checkpoints/65fd1f04cb4c5847d86a9ed8ba31ac1a.ckpt")
+    model = Lungevity(
+        transformer=cfg.model.transformer,
+        patch_size=cfg.model.patch_size,
+        grid_size=[
+            int(cfg.data.img_size[0]/cfg.model.patch_size[0]), 
+            int(cfg.data.img_size[1]/cfg.model.patch_size[1]), 
+            int(cfg.data.img_size[2]/cfg.model.patch_size[2])
+            ],
+        enc_dim=cfg.model.enc_dim,
+        enc_blocks=cfg.model.enc_depth,
+        enc_heads=cfg.model.enc_heads,
+        dropout_rate=cfg.model.dropout_rate,
+        num_reg_tokens=cfg.model.num_reg_tokens,
+        use_cls=cfg.model.use_cls,
+        hidden_dim=cfg.model.enc_dim,
+        max_followup=cfg.data.max_followup,
+        fusion_layer=cfg.model.fusion_layer,
+        guided_attention_heads=cfg.model.guided_attention_heads,
+        use_mean_token=cfg.model.use_mean_token,
+                    )
+
+    ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint)
+    ckpt_name = os.path.join(ckpt_root_dir, "last.pt")
+    # ckpt_name = os.path.join(cfg.log.ckpt_loc, "best_checkpoint_step_81.pth")
+    ckpt = torch.load(ckpt_name, weights_only=False)
+    model.load_state_dict(ckpt['model'], strict=True)
     model = model.to(device)
 
     steps_per_epoch = len(monai_dict_test) // cfg.training.batch_size
-
-    probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.max_followup))
-    golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
-    censors = np.zeros((steps_per_epoch, cfg.training.batch_size))
-
+    probs, golds, censors = [], [], []
     model.eval()
     for step, batch in tqdm(enumerate(test_loader), total=steps_per_epoch):
         with torch.no_grad():
@@ -86,13 +99,15 @@ def main(cfg: Config):
                 y_seq = batch['y_seq'].to(device)
                 y_mask = batch['y_mask'].to(device)
 
-                image = image.permute(0,1,4,2,3)
                 loss, _probs = step_fn(model, image, y_seq, y_mask, device)
 
-        probs[step, :, :] = _probs.detach().cpu().numpy()
-        golds[step, :] = batch['y'].cpu().numpy()
-        censors[step, :] = batch['time_at_event'].cpu().numpy()
+        probs.append(_probs.detach().cpu().numpy())
+        golds.append(batch['y'].cpu().numpy())
+        censors.append(batch['time_at_event'].cpu().numpy())
 
+    probs = np.concatenate(probs, axis=0)
+    golds = np.concatenate(golds, axis=0)
+    censors = np.concatenate(censors, axis=0)
     survival_metrics, risk_metrics = compute_and_log_metrics_risk(censors, probs, golds, train_censoring_distribution, cfg.data.max_followup, mode="test")
     log_targets(probs, golds, censors, cfg.log.num_predictions, "test")
 
@@ -110,9 +125,9 @@ def main(cfg: Config):
     print(len(monai_dict_test))
     for i in range(len(probs)):
         res.append({
-            "cancer_risk": probs[i][0].tolist(),
-            "gold": golds[i][0].tolist(),
-            "censors": censors[i][0].tolist(),
+            "cancer_risk": probs[i].tolist(),
+            "gold": golds[i].tolist(),
+            "censors": censors[i].tolist(),
             "pid": monai_dict_test[i]['pid'],
             "study": monai_dict_test[i]['study'],
             "series": monai_dict_test[i]['series'],
@@ -125,7 +140,7 @@ def main(cfg: Config):
             "y_mask": monai_dict_test[i]['y_mask'],
         })
 
-    with open(f"{cfg.log.ckpt_loc}/sybil_cs_predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
+    with open(f"{cfg.log.ckpt_loc}/predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
         json.dump(res, fp, indent=4)
 
     return
@@ -137,7 +152,7 @@ def step_fn(
         y_mask,
         device,
 ):
-    n_year_logits = model(img, return_hidden=False)
+    n_year_logits, _ = model(img)
     loss = loss_fn(n_year_logits, y_seq, y_mask)
     return loss, F.sigmoid(n_year_logits)
 

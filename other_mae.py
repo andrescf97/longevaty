@@ -64,11 +64,11 @@ def main(cfg: DictConfig):
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=cfg.training.shuffle, 
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                              persistent_workers=True, pin_memory=True,
+                              persistent_workers=False, pin_memory=False,
                               generator=dataset_gnr)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, pin_memory=True,
+                        persistent_workers=False, pin_memory=False,
                         generator=dev_dataset_gnr)
 
     model = Vital(
@@ -176,10 +176,10 @@ def main(cfg: DictConfig):
 
         if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
             if total_loss <= best_loss:
-                save_dest = os.path.join(cfg.log.ckpt_loc, f"{wandb.run.name}.ckpt")
+                file_name = f"{wandb.run.name}.ckpt"
                 if not os.path.exists(cfg.log.ckpt_loc):
                     os.makedirs(cfg.log.ckpt_loc)
-                save_checkpoint(save_dest, model, epoch, optimizer, scheduler, scaler)
+                save_checkpoint(cfg.log.ckpt_loc, file_name, model, epoch, optimizer, scheduler, scaler, best_loss, step)
                 best_loss = total_loss
 
 

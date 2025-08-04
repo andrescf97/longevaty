@@ -180,6 +180,9 @@ class Permuted(transforms.MapTransform):
         # Permute the image dimensions for 3d conv patch embedding
         permuted_image = image.permute(0, 3, 1, 2)
         data['image'] = permuted_image
+
+        if 'annotation' not in self.keys:
+            return data
         if data.get('annotation', None) is None:
             # create a dummy annotation if it does not exist
             data['annotation'] = torch.zeros_like(permuted_image)

@@ -16,7 +16,7 @@ def load_checkpoint(mngr):
 
 
 def load_checkpointed_state(loc, ckpt_name, device, model, optimizer, scheduler, scaler, new_learning_rate):
-    loc = loc + ckpt_name
+    loc = os.path.join(loc, ckpt_name)
     if not os.path.exists(loc):
         return 0
     else:

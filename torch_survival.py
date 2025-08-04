@@ -43,7 +43,7 @@ resource.setrlimit(resource.RLIMIT_NOFILE, (2*25000, rlimit[1]))
 
 device = ( "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-@hydra.main(version_base=None, config_path="./configs/", config_name="survival.yaml")
+@hydra.main(version_base=None, config_path="./configs/", config_name="survival-torch.yaml")
 def main(cfg: DictConfig):
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
@@ -97,11 +97,11 @@ def main(cfg: DictConfig):
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, 
                               shuffle=cfg.training.shuffle, 
                               num_workers=cfg.training.num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                              persistent_workers=True, pin_memory=False,
+                              persistent_workers=False, pin_memory=False,
                               drop_last=True, sampler=sampler)
     dev_loader = DataLoader(dev_ds, batch_size=cfg.training.batch_size, shuffle=False,
                         num_workers=cfg.training.dev_num_workers, prefetch_factor=cfg.training.prefetch_factor,
-                        persistent_workers=True, pin_memory=False,
+                        persistent_workers=False, pin_memory=False,
                         drop_last=True)
 
     model = Lungevity(
@@ -220,6 +220,7 @@ def main(cfg: DictConfig):
         log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
 
         if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
+            print("Saving checkpoint")
             sum = survival_metrics['dev/1_year_auc'] + survival_metrics['dev/2_year_auc'] + survival_metrics['dev/3_year_auc'] \
                 + survival_metrics['dev/4_year_auc'] + survival_metrics['dev/5_year_auc'] + survival_metrics['dev/6_year_auc'] 
             if sum >= ckpt_metric:
@@ -340,7 +341,8 @@ def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
     
     return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
 
-def dev_loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
+def loss_fn_mse(model, images, annotations, laterality, laterality_label, lobes,
+            patch_size, y_seq, y_mask, sw, aw):
     # Survival loss
     n_year_logits, attn_weights = model(images)
     survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
@@ -349,16 +351,17 @@ def dev_loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
     # Annotation loss
     attn_weights = attn_weights.mean(dim=1)  # Average attention weights across heads
     attn_weights = attn_weights.mean(dim=1)  # Average attention weights across tokens
-    attn_scores = F.log_softmax(attn_weights, dim=-1)
 
-    annotations = patchify(annotations, patch_size) 
-    annotations_mask = (annotations > 0).any(dim=(1, 2))
-    mask_area = annotations.sum(dim=(-1, -2))
-    mask_area = torch.where(mask_area == 0, 1, mask_area)
-    annotations_gold = annotations.sum(dim=-1) / mask_area[:, None]
+    
 
-    annotation_loss = F.kl_div(attn_scores, annotations_gold, reduction='none') * annotations_mask[:, None]
-    annotation_loss = annotation_loss.sum() / annotations_mask.sum()
+def dev_loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
+    # Survival loss
+    n_year_logits, _ = model(images)
+    survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
+    survival_loss = survival_loss.sum() / y_mask.sum()
+
+    # Annotation loss
+    annotation_loss = torch.tensor(0.0)
 
     return (sw * survival_loss + aw * annotation_loss), (survival_loss, annotation_loss, torch.sigmoid(n_year_logits))
 
