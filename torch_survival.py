@@ -61,6 +61,7 @@ def main(cfg: DictConfig):
     with open(cfg.data.monai_dict_dev) as fp:
         monai_dict_dev = json.load(fp)
         
+        
     train_transforms = make_transformations(tf_dict=cfg.transform.train_tf)
     dev_transforms = make_transformations(tf_dict=cfg.transform.dev_tf)
 
@@ -126,13 +127,52 @@ def main(cfg: DictConfig):
                     )
     
     model = model.to(device)
-    if cfg.optimizer.lr_scheduler == 'onecycle':
-        optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor))
+    
+    # Get freeze configuration
+    freeze_encoder_epochs = getattr(cfg.training, 'freeze_encoder_epochs', 0)
+    
+    # Phase 1: Create optimizer and scheduler for classifier-only training
+    if cfg.optimizer.lr_scheduler == 'onecycle' and freeze_encoder_epochs > 0:
+        # Phase 1: Only classifier parameters (encoder will be frozen)
+        classifier_params = []
+        for name, param in model.named_parameters():
+            if 'encoder' not in name:  # All non-encoder parameters
+                classifier_params.append(param)
+        
+        optimizer_phase1 = torch.optim.AdamW(classifier_params, 
+                                           lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor), 
+                                           weight_decay=cfg.optimizer.weight_decay)
+        
+        # OneCycleLR for phase 1 (classifier only)
+        scheduler_phase1 = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer_phase1, max_lr=cfg.optimizer.peak_lr,
+            epochs=freeze_encoder_epochs, steps_per_epoch=len(train_loader),
+            pct_start=0.1,  # 10% warmup as requested
+            div_factor=cfg.optimizer.div_factor, 
+            final_div_factor=cfg.optimizer.final_div_factor
+        )
+        
+        # Phase 2: All parameters for remaining epochs
+        remaining_epochs = cfg.training.epochs - freeze_encoder_epochs
+        optimizer_phase2 = torch.optim.AdamW(model.parameters(), 
+                                           lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor), 
+                                           weight_decay=cfg.optimizer.weight_decay)
+        
+        # Note: scheduler_phase2 will be created fresh when switching to phase 2
+        # to ensure step counter starts at 0
+        
+        # Set initial optimizer and scheduler
+        optimizer = optimizer_phase1
+        scheduler = scheduler_phase1
+        
+    elif cfg.optimizer.lr_scheduler == 'onecycle':
+        # Original single-phase OneCycleLR
+        optimizer = torch.optim.AdamW(model.parameters(), lr=(cfg.optimizer.peak_lr/cfg.optimizer.div_factor), weight_decay=cfg.optimizer.weight_decay)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=cfg.optimizer.peak_lr,
                                                     epochs=cfg.training.epochs, steps_per_epoch=len(train_loader),
                                                     pct_start=cfg.optimizer.pct_start, div_factor=cfg.optimizer.div_factor, final_div_factor=cfg.optimizer.final_div_factor)
     else:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.peak_lr)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.optimizer.peak_lr, weight_decay=cfg.optimizer.weight_decay)
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=1,
@@ -160,8 +200,47 @@ def main(cfg: DictConfig):
     dev_censors = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     ckpt_metric = 0
     save_step = 0
+    
+    # Function to freeze/unfreeze encoder
+    def set_encoder_frozen(model, frozen=True):
+        if hasattr(model, 'encoder'):
+            for param in model.encoder.parameters():
+                param.requires_grad = not frozen
+            print(f"Encoder {'frozen' if frozen else 'unfrozen'}")
+    
     model.train()
+    
+    # Set default freeze epochs if not specified in config
+    freeze_encoder_epochs = getattr(cfg.training, 'freeze_encoder_epochs', 0)
+    
+    # Track phase switching for two-phase OneCycleLR
+    phase_switched = False
+    
     for epoch in range(start_epoch, cfg.training.epochs):
+        # Handle phase switching for two-phase OneCycleLR
+        if (cfg.optimizer.lr_scheduler == 'onecycle' and freeze_encoder_epochs > 0 and 
+            epoch == freeze_encoder_epochs and not phase_switched):
+            print(f"Switching to Phase 2: Unfreezing encoder and starting new OneCycleLR")
+            
+            # Create fresh scheduler for phase 2 to ensure step counter starts at 0
+            remaining_epochs = cfg.training.epochs - freeze_encoder_epochs 
+            optimizer = optimizer_phase2
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer, max_lr=cfg.optimizer.peak_lr,
+                epochs=remaining_epochs, steps_per_epoch=len(train_loader),
+                pct_start=cfg.optimizer.pct_start,  # This will start warmup from beginning of phase 2
+                div_factor=cfg.optimizer.div_factor, 
+                final_div_factor=cfg.optimizer.final_div_factor
+            )
+            phase_switched = True
+            
+            print(f"Phase 2: New OneCycleLR will warm up for {cfg.optimizer.pct_start*100:.1f}% of {remaining_epochs} epochs")
+        
+        # Freeze encoder for first x epochs
+        if epoch < freeze_encoder_epochs:
+            set_encoder_frozen(model, frozen=True)
+        else:
+            set_encoder_frozen(model, frozen=False)
         # Train
         # Init storage variables
         running_loss, running_survival_loss, running_annotation_loss = 0, 0, 0
@@ -177,6 +256,11 @@ def main(cfg: DictConfig):
                 y_seq, y_mask, 
                 (cfg.loss.sw, cfg.loss.aw), optimizer, scaler, cfg.model.patch_size
             )
+            
+            # Step scheduler after each batch for OneCycleLR
+            if cfg.optimizer.lr_scheduler == 'onecycle':
+                scheduler.step()
+            
             running_loss += loss
             running_survival_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
@@ -218,6 +302,10 @@ def main(cfg: DictConfig):
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
         survival_metrics, _ = compute_and_log_metrics_risk(dev_censors, dev_probs, dev_golds, train_censoring_distribution, cfg.data.max_followup, mode="dev")
         log_targets(dev_probs, dev_golds, dev_censors, cfg.log.num_predictions, "dev")
+
+        # Step scheduler after each epoch for non-OneCycleLR schedulers
+        if cfg.optimizer.lr_scheduler != 'onecycle':
+            scheduler.step()
 
         if to_save_checkpoint(epoch, cfg.training.epochs, cfg.log.checkpoint_at_epoch, cfg.training.to_checkpoint):
             print("Saving checkpoint")

@@ -4,7 +4,7 @@
 
 wandb:
     dry_run: False
-    project_name: "survival-torch"
+    project_name: "test-jax"
     task: "mae"
     entity: "mri-ai-lab"
 
@@ -48,6 +48,9 @@ training:
     freeze_encoder: True
     freeze_mha: False
     resume: False
+
+testing:
+    use_checkpoint: 'best.pt'
 
 optimizer:
     lr_scheduler: constant

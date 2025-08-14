@@ -83,7 +83,7 @@ def main(cfg: DictConfig):
                     )
 
     ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint)
-    ckpt_name = os.path.join(ckpt_root_dir, "last.pt")
+    ckpt_name = os.path.join(ckpt_root_dir, cfg.testing.use_checkpoint)
     # ckpt_name = os.path.join(cfg.log.ckpt_loc, "best_checkpoint_step_81.pth")
     ckpt = torch.load(ckpt_name, weights_only=False)
     model.load_state_dict(ckpt['model'], strict=True)

@@ -40,6 +40,7 @@ class LossFn(Enum):
 
 @dataclass
 class TrainingConfig:
+    freeze_encoder_epochs: int = 0
     dtype: str = 'bfloat16'
     mask_ratio: float = 0.4
     use_amp: bool = False
@@ -67,6 +68,7 @@ class OptimizerConfig:
     warmup_epochs: int = 5
     div_factor: int = 100
     final_div_factor: int = 100
+    weight_decay: float = 1e-4
 
 class WeightingStrategy(Enum):
     heirarchical = 0
@@ -160,6 +162,10 @@ class TransformsConfig:
     dev_tf: dict[str, Any] = field(default_factory=dict)
     test_tf: dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class TestingConfig:
+    use_checkpoint: str = "best.pt"
+
 
 @dataclass
 class Config:
@@ -172,4 +178,5 @@ class Config:
     optimizer: OptimizerConfig = field(default=OptimizerConfig)
     loss: LossConfig = field(default=LossConfig)
     log: LoggingConfig = field(default_factory=LoggingConfig)
-    transform: TransformsConfig = field(default_factory=TransformsConfig)  
+    transform: TransformsConfig = field(default_factory=TransformsConfig)
+    testing: TestingConfig = field(default_factory=TestingConfig)
