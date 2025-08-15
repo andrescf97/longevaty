@@ -19,9 +19,9 @@ data:
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
     data_root: "/pool/data/lung/NLST/npy"
-    monai_dict_train: "/pool/data/lung/NLST/json/mae_train.json"
-    monai_dict_dev: "/pool/data/lung/NLST/json/mae_dev.json"
-    monai_dict_test: "/pool/data/lung/NLST/json/mae_test.json"
+    monai_dict_train: "/pool/data/lung/NLST/json/testrun_tab_data_train.json"
+    monai_dict_dev: "/pool/data/lung/NLST/json/testrun_tab_data_dev.json"
+    monai_dict_test: "/pool/data/lung/NLST/json/testrun_tab_data_test.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
