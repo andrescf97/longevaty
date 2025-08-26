@@ -18,10 +18,10 @@ data:
     use_thinnest_cut: True
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
-    data_root: "/pool/data/lung/NLST/npy"
-    monai_dict_train: "/pool/data/lung/NLST/json/train_our.json"
-    monai_dict_dev: "/pool/data/lung/NLST/json/dev_our.json"
-    monai_dict_test: "/pool/data/lung/NLST/json/test_our.json"
+    data_root: "/mnt/nlst_data/npy"
+    monai_dict_train: "/mnt/nlst_data/json_files/train_sybil.json"
+    monai_dict_dev: "/mnt/nlst_data/json_files/dev_sybil.json"
+    monai_dict_test: "/mnt/nlst_data/json_files/test_sybil.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -33,9 +33,9 @@ training:
     mask_ratio: 0.5
     seed: 0
     num_workers: 0
-    dev_num_workers: 4
-    test_num_workers: 1
-    prefetch_factor: 5
+    dev_num_workers: 0
+    test_num_workers: 0
+    prefetch_factor: null
     dev_prefetch_factor: null
     shuffle: False
     epochs: 10
@@ -67,8 +67,8 @@ loss:
     aw: 1
 
 log:
-    ckpt_loc: "/pool/data/lung/NLST/checkpoints/survival"
-    ckpt_load_loc: "/pool/data/lung/NLST/checkpoints/mae"
+    ckpt_loc: "/mnt/nlst_data/checkpoints/malignancy_cl"
+    ckpt_load_loc: "/mnt/nlst_data/backup_checkpoints_glutamate/eva_ckpt"
     mae_ckpt_load: 'vit-last'
     mae_use_checkpoint: 'crisp-donkey-382.ckpt'
     ckpt_best: 'vit'
@@ -82,7 +82,7 @@ log:
 
 model:
     transformer: 'eva'
-    patch_size: [8,8,8]
+    patch_size: [16,16,16]
     enc_dim: 792
     dec_dim: 396
     dropout_rate: 0.1
@@ -174,7 +174,7 @@ transform:
             keys: ['image', 'annotation', 'mask']
         Lateralityd_our:
             keys: ['annotation']
-            patch_size: [8, 8, 8]
+            patch_size: [16, 16, 16]
         ToTensord:
             keys: ['image', 'annotation', 'y_mask', 'y_seq']
             allow_missing_keys: True
