@@ -15,6 +15,9 @@ logger.setLevel(logging.INFO)
 from tvital.config import load_config_store
 load_config_store()
 
+df_gender = pd.read_csv('/mnt/nlst_data/tab-data/participant_d040722.csv')
+df_abnorm = pd.read_csv('/mnt/nlst_data/tab-data/sct_abnormalities_d040722.csv')
+
 @hydra.main(version_base=None, config_path="./configs/", config_name="others.yaml")
 def main(cfg):
     with open(cfg.data.dataset_file, "r") as fp:
@@ -40,7 +43,7 @@ def main(cfg):
     def get_summary_statement(dataset, split_group):
         summary = "Contructed NLST CT Cancer Risk {} dataset with {} records, {} exams, {} patients, and the following class balance \n {}"
         class_balance = Counter([d["y"] for d in dataset])
-        exams = set([d["exam"] for d in dataset])
+        exams = set([d["series"] for d in dataset])
         patients = set([d["pid"] for d in dataset])
         statement = summary.format(
             split_group, len(dataset), len(exams), len(patients), class_balance
@@ -211,16 +214,19 @@ def get_volume_dict(
             "time_at_event": time_at_event,
             "y_seq": y_seq,
             "y_mask": y_mask,
-            "exam_str": "{}_{}".format(exam_dict["exam"], series_id),
-            "exam": exam_int,
-            "accession": exam_dict["accession_number"],
             "series": series_id,
             "study": series_data["studyuid"][0],
             "screen_timepoint": screen_timepoint,
             "pid": pid,
-            "device": device,
             "institution": pt_metadata["cen"][0],
             "cancer_laterality": get_cancer_lobe(pt_metadata),
+            "sex": 1 if df_gender.loc[df_gender['pid']==int(pid)]['gender'].item() == 1 else 0,
+            "smoking_status": 1 if df_gender.loc[df_gender['pid']==int(pid)]['cigsmok'].item() == 1 else 0,
+            "pleural_effusion": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==55)]) > 0 else 0,
+            "nodule_greater_4mm": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc'].isin([51, 53]))]) > 0 else 0,
+            "emphysema": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==59)]) > 0 else 0,
+            "fibrosis": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==61)]) > 0 else 0,
+            "age": df_gender.loc[df_gender['pid']==int(pid)]['age'].item()
         }
     else:
         sample = {
@@ -231,16 +237,19 @@ def get_volume_dict(
             "time_at_event": time_at_event,
             "y_seq": y_seq,
             "y_mask": y_mask,
-            "exam_str": "{}_{}".format(exam_dict["exam"], series_id),
-            "exam": exam_int,
-            "accession": exam_dict["accession_number"],
             "series": series_id,
             "study": series_data["studyuid"][0],
             "screen_timepoint": screen_timepoint,
             "pid": pid,
-            "device": device,
             "institution": pt_metadata["cen"][0],
             "cancer_laterality": get_cancer_lobe(pt_metadata),
+            "sex": 1 if df_gender.loc[df_gender['pid']==int(pid)]['gender'].item() == 1 else 0,
+            "smoking_status": 1 if df_gender.loc[df_gender['pid']==int(pid)]['cigsmok'].item() == 1 else 0,
+            "pleural_effusion": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==55)]) > 0 else 0,
+            "nodule_greater_4mm": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc'].isin([51, 53]))]) > 0 else 0,
+            "emphysema": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==59)]) > 0 else 0,
+            "fibrosis": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==61)]) > 0 else 0,
+            "age": df_gender.loc[df_gender['pid']==int(pid)]['age'].item()
         }
 
     return sample

@@ -9,8 +9,8 @@ wandb:
     entity: "mri-ai-lab"
 
 data:
-    dataset_file: "/pool/data/lung/NLST/json/nlst_metadata.json"
-    dataset_file_100: "/pool/data/lung/NLST/json/nlst_metadata.json"
+    dataset_file: "/mnt/external_ssd/NLST/nlst_metadata.json"
+    dataset_file_100: "/mnt/external_ssd/NLST/nlst_metadata.json"
     slice_thickness_threshold: 2.5
     max_followup: 6
     num_classes: 1
@@ -18,10 +18,10 @@ data:
     use_thinnest_cut: True
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
-    data_root: "/pool/data/lung/NLST/npy/"
-    monai_dict_train: "/pool/data/lung/NLST/json/train_sybil.json"
-    monai_dict_dev: "/pool/data/lung/NLST/json/dev_sybil.json"
-    monai_dict_test: "/pool/data/lung/NLST/json/test_sybil.json"
+    data_root: "/mnt/nlst_data/npy/"
+    monai_dict_train: "/mnt/nlst_data/json_files/train_sybil.json"
+    monai_dict_dev: "/mnt/nlst_data/json_files/dev_sybil.json"
+    monai_dict_test: "/mnt/nlst_data/json_files/test_sybil.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 

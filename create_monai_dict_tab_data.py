@@ -18,14 +18,14 @@ logger.setLevel(logging.INFO)
 from vital.config import load_config_store
 load_config_store()
 
-df_gender = pd.read_csv('/pool/data/lung/NLST/tab_data/participant_d040722.csv')
-df_abnorm = pd.read_csv('/pool/data/lung/NLST/tab_data/sct_abnormalities_d040722.csv')
+df_gender = pd.read_csv('/mnt/nlst_data/tab-data/participant_d040722.csv')
+df_abnorm = pd.read_csv('/mnt/nlst_data/tab-data/sct_abnormalities_d040722.csv')
 #%%
 
 @hydra.main(version_base=None, config_path="./configs/", config_name="mae-glutamate.yaml")
 def main(cfg):
     df = pd.read_csv("/pool/data/lung/NLST/real_nlst_series.csv")
-    participants_df = pd.read_csv("/pool/data/lung/NLST/participant_d040722.csv")
+    participants_df = pd.read_csv("/mnt/nlst_data/tab-data/participant_d040722.csv")
     with open("/pool/data/lung/NLST/filtered_series.pkl", "rb") as fp:
         filtered_series = pickle.load(fp)
 
@@ -123,7 +123,7 @@ def create_dataset(split, filtered_df, df, participants_df, max_followup, data_r
                 "nodule_greater_4mm": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc'].isin([51, 53]))]) > 0 else 0,
                 "emphysema": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==59)]) > 0 else 0,
                 "fibrosis": 1 if len(df_abnorm.loc[(df_abnorm['pid']==int(pid)) & (df_abnorm['study_yr'] == int(screen_timepoint)) & (df_abnorm['sct_ab_desc']==61)]) > 0 else 0,
-
+                "age": df_gender.loc[df_gender['pid']==int(pid)]['age'].item()
                 }
             
             dataset.append(sample)
