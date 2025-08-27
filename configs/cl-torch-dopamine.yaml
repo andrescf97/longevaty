@@ -95,6 +95,7 @@ model:
     num_reg_tokens: 0 # We do not use EVA's register tokens, only our CLS token
     use_cls: True
     use_mean_token: False
+    task: "survival"  # "classification" or "survival"
     guided_attention_heads: 4
     fusion_layer: False
 

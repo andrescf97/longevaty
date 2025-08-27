@@ -127,10 +127,12 @@ def main(cfg: DictConfig):
         num_reg_tokens=cfg.model.num_reg_tokens,
         use_cls=cfg.model.use_cls,
         hidden_dim=cfg.model.enc_dim,
-        max_followup=1,  # Changed from cfg.data.max_followup to 1 for binary classification
+        max_followup=getattr(cfg.data, 'max_followup', 6),  # Use from config or default to 6
         fusion_layer=cfg.model.fusion_layer,
         guided_attention_heads=cfg.model.guided_attention_heads,
         use_mean_token=cfg.model.use_mean_token,
+        task=getattr(cfg.model, 'task', 'classification'),  # Use from config or default to classification
+        num_classes=cfg.data.num_classes,  # Use from config
                     )
     
     model = model.to(device)
@@ -197,11 +199,17 @@ def main(cfg: DictConfig):
     steps_per_epoch = len(sampler) // cfg.training.batch_size
     dev_steps_per_epoch = len(monai_dict_dev) // cfg.training.batch_size
 
-    # Init running value arrays - Changed for binary classification
-    probs = np.zeros((steps_per_epoch, cfg.training.batch_size))  # Removed max_followup dimension
+    # Init running value arrays - Handle both binary and multi-class
+    if cfg.data.num_classes == 1:
+        # Binary classification: store probabilities as scalars
+        probs = np.zeros((steps_per_epoch, cfg.training.batch_size))
+        dev_probs = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
+    else:
+        # Multi-class classification: store probability vectors
+        probs = np.zeros((steps_per_epoch, cfg.training.batch_size, cfg.data.num_classes))
+        dev_probs = np.zeros((dev_steps_per_epoch, cfg.training.batch_size, cfg.data.num_classes))
+    
     golds = np.zeros((steps_per_epoch, cfg.training.batch_size))
-
-    dev_probs = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))  # Removed max_followup dimension
     dev_golds = np.zeros((dev_steps_per_epoch, cfg.training.batch_size))
     ckpt_metric = 0
     save_step = 0
@@ -259,7 +267,8 @@ def main(cfg: DictConfig):
             loss, segregated_loss, _probs = train_step(
                 model, images, annotations, laterality, laterality_label, lobes,
                 y, 
-                (cfg.loss.sw, cfg.loss.aw), optimizer, scaler, cfg.model.patch_size
+                (cfg.loss.sw, cfg.loss.aw), optimizer, scaler, cfg.model.patch_size,
+                cfg.data.num_classes
             )
             
             # Step scheduler after each batch for OneCycleLR
@@ -269,7 +278,12 @@ def main(cfg: DictConfig):
             running_loss += loss
             running_classification_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
-            probs[step, :] = np.array(_probs)  # Now 2D instead of 3D
+            if cfg.data.num_classes == 1:
+                # Binary: store as scalars
+                probs[step, :] = _probs.float().numpy()
+            else:
+                # Multi-class: store as probability vectors
+                probs[step, :, :] = _probs.float().numpy()
             golds[step, :] = y.numpy()
             
             if to_log(step, steps_per_epoch, cfg.log.log_at_these_steps):
@@ -280,7 +294,7 @@ def main(cfg: DictConfig):
                 wandb.log({"lr": optimizer.param_groups[0]['lr']})
 
         wandb.log({"train/loss": running_loss / steps_per_epoch})
-        compute_and_log_classification_metrics(probs, golds, mode="train")
+        compute_and_log_classification_metrics(probs, golds, mode="train", num_classes=cfg.data.num_classes)
 
         # Dev
         running_loss, running_classification_loss, running_annotation_loss = 0, 0, 0
@@ -293,16 +307,22 @@ def main(cfg: DictConfig):
             
             loss, segregated_loss, _probs = dev_step(
                 model, images, annotations, y, 
-                (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size
+                (cfg.loss.sw, cfg.loss.aw), cfg.model.patch_size,
+                cfg.data.num_classes
             )
             running_loss += loss
             running_classification_loss += segregated_loss[0]
             running_annotation_loss += segregated_loss[1]
-            dev_probs[step, :] = np.array(_probs)  # Now 2D instead of 3D
+            if cfg.data.num_classes == 1:
+                # Binary: store as scalars
+                dev_probs[step, :] = _probs.float().numpy()
+            else:
+                # Multi-class: store as probability vectors
+                dev_probs[step, :, :] = _probs.float().numpy()
             dev_golds[step, :] = y.numpy()
 
         wandb.log({"dev/loss": running_loss / dev_steps_per_epoch})
-        classification_metrics = compute_and_log_classification_metrics(dev_probs, dev_golds, mode="dev")
+        classification_metrics = compute_and_log_classification_metrics(dev_probs, dev_golds, mode="dev", num_classes=cfg.data.num_classes)
 
         # Step scheduler after each epoch for non-OneCycleLR schedulers
         if cfg.optimizer.lr_scheduler != 'onecycle':
@@ -328,16 +348,17 @@ def train_step(
         laterality: torch.Tensor,
         laterality_label: torch.Tensor,
         lobes: torch.Tensor,
-        y: torch.Tensor,  # Binary labels
+        y: torch.Tensor,  # Labels (binary or multi-class)
         loss_weights: tuple,
         optimizer,
         scaler,
         patch_size,
+        num_classes: int,
 ):
     # Move tensors to device and correct dtype
     images = images.to(device, dtype=torch.bfloat16)
     annotations = annotations.to(device, dtype=torch.bfloat16)
-    y = y.to(device, dtype=torch.float32)  # Binary labels
+    y = y.to(device, dtype=torch.float32 if num_classes == 1 else torch.long)  # float32 for binary, long for multi-class
     laterality_label = laterality_label.to(device)
     lobes = lobes.to(device)
     laterality = laterality.to(device, dtype=torch.int64)
@@ -348,7 +369,7 @@ def train_step(
         loss, (classification_loss, annotation_loss, probs) = loss_fn(
             model, images, annotations, laterality, laterality_label, lobes,
             patch_size, y, 
-            loss_weights[0], loss_weights[1]
+            loss_weights[0], loss_weights[1], num_classes
         )
     
     # PyTorch backpropagation
@@ -363,32 +384,57 @@ def dev_step(
         model,
         images: torch.Tensor,
         annotations: torch.Tensor,
-        y: torch.Tensor,  # Binary labels
+        y: torch.Tensor,  # Labels (binary or multi-class)
         loss_weights: tuple,
         patch_size,
+        num_classes: int,
 ):
     # Move tensors to device and correct dtype
     images = images.to(device, dtype=torch.bfloat16)
     annotations = annotations.to(device, dtype=torch.bfloat16)
-    y = y.to(device, dtype=torch.float32)  # Binary labels
+    y = y.to(device, dtype=torch.float32 if num_classes == 1 else torch.long)  # float32 for binary, long for multi-class
     
     with torch.no_grad():
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=True):
             loss, (classification_loss, annotation_loss, probs) = dev_loss_fn(
                 model, images, annotations, patch_size, y, 
-                loss_weights[0], loss_weights[1]
+                loss_weights[0], loss_weights[1], num_classes
             )
     
     return loss.item(), (classification_loss.item(), annotation_loss.item()), probs.detach().cpu()
 
 
 def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
-            patch_size, y, sw, aw):
-    # Binary classification loss
-    logits, attn_weights = model(images)
-    # For binary classification, take the first (and only) output
-    binary_logits = logits[:, 0]  # Shape: [batch_size]
-    classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
+            patch_size, y, sw, aw, num_classes):
+    # Classification loss (binary or multi-class)
+    output, attn_weights = model(images)  # Model will output based on its task setting
+    
+    # Handle output based on model task
+    if model.task == "classification":
+        # output is [batch_size, num_classes] from classifier
+        if num_classes == 1:
+            # Binary classification case
+            binary_logits = output.squeeze(-1)  # Shape: [batch_size]
+            classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
+            probs = torch.sigmoid(binary_logits)
+        else:
+            # Multi-class classification case
+            multi_logits = output  # Shape: [batch_size, num_classes]
+            classification_loss = F.cross_entropy(multi_logits, y)
+            probs = F.softmax(multi_logits, dim=-1)
+    elif model.task == "survival":
+        # output is [batch_size, max_followup] from survival classifier
+        # For classification, take the first time point
+        if num_classes == 1:
+            # Binary classification case
+            binary_logits = output[:, 0]  # Shape: [batch_size]
+            classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
+            probs = torch.sigmoid(binary_logits)
+        else:
+            # Multi-class not supported for survival task
+            raise ValueError("Multi-class classification not supported for survival task")
+    else:
+        raise ValueError(f"Unknown task: {model.task}")
 
     # Annotation loss (keep the same as original)
     attn_weights = attn_weights.mean(dim=1)  # Average attention weights across heads
@@ -424,95 +470,169 @@ def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
     side_loss = side_loss.sum() / num_sides
     annotation_loss += lobe_loss + side_loss
     
-    return (sw * classification_loss + aw * annotation_loss), (classification_loss, annotation_loss, torch.sigmoid(binary_logits))
+    return (sw * classification_loss + aw * annotation_loss), (classification_loss, annotation_loss, probs)
 
 
-def dev_loss_fn(model, images, annotations, patch_size, y, sw, aw):
-    # Binary classification loss
-    logits, _ = model(images)
-    # For binary classification, take the first (and only) output
-    binary_logits = logits[:, 0]  # Shape: [batch_size]
-    classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
-
+def dev_loss_fn(model, images, annotations, patch_size, y, sw, aw, num_classes):
+    # Classification loss (binary or multi-class)
+    output, _ = model(images)  # Model will output based on its task setting
+    
+    # Handle output based on model task
+    if model.task == "classification":
+        # output is [batch_size, num_classes] from classifier
+        if num_classes == 1:
+            # Binary classification case
+            binary_logits = output.squeeze(-1)  # Shape: [batch_size]
+            classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
+            probs = torch.sigmoid(binary_logits)
+        else:
+            # Multi-class classification case
+            multi_logits = output  # Shape: [batch_size, num_classes]
+            classification_loss = F.cross_entropy(multi_logits, y)
+            probs = F.softmax(multi_logits, dim=-1)
+    elif model.task == "survival":
+        # output is [batch_size, max_followup] from survival classifier
+        # For classification, take the first time point
+        if num_classes == 1:
+            # Binary classification case
+            binary_logits = output[:, 0]  # Shape: [batch_size]
+            classification_loss = F.binary_cross_entropy_with_logits(binary_logits, y)
+            probs = torch.sigmoid(binary_logits)
+        else:
+            # Multi-class not supported for survival task
+            raise ValueError("Multi-class classification not supported for survival task")
+    else:
+        raise ValueError(f"Unknown task: {model.task}")
+        
     # Annotation loss (set to zero for dev)
     annotation_loss = torch.tensor(0.0)
 
-    return (sw * classification_loss + aw * annotation_loss), (classification_loss, annotation_loss, torch.sigmoid(binary_logits))
+    return (sw * classification_loss + aw * annotation_loss), (classification_loss, annotation_loss, probs)
 
 
-def compute_and_log_classification_metrics(probs, golds, mode='train'):
+def compute_and_log_classification_metrics(probs, golds, mode='train', num_classes=1):
     """
-    Compute and log binary classification metrics
+    Compute and log classification metrics for binary or multi-class
     """
-    # Flatten arrays
-    probs_flat = probs.flatten()
-    golds_flat = golds.flatten()
-    
-    # Filter out any NaN or invalid values
-    valid_mask = ~(np.isnan(probs_flat) | np.isnan(golds_flat))
-    probs_flat = probs_flat[valid_mask]
-    golds_flat = golds_flat[valid_mask]
-    
-    if len(probs_flat) == 0:
-        print(f"No valid predictions for {mode}")
-        return {}
-    
-    # Convert probabilities to predictions
-    predictions = (probs_flat > 0.5).astype(int)
-    
-    # Compute metrics
-    try:
-        accuracy = accuracy_score(golds_flat, predictions)
-        precision, recall, f1, _ = precision_recall_fscore_support(golds_flat, predictions, average='binary', zero_division=0)
-        mcc = matthews_corrcoef(golds_flat, predictions)
+    if num_classes == 1:
+        # Binary classification
+        probs_flat = probs.flatten()
+        golds_flat = golds.flatten()
         
-        # ROC AUC and PR AUC (only if both classes are present)
-        if len(np.unique(golds_flat)) > 1:
-            roc_auc = roc_auc_score(golds_flat, probs_flat)
-            pr_auc = average_precision_score(golds_flat, probs_flat)
-        else:
-            roc_auc = -1.0
-            pr_auc = -1.0
+        # Filter out any NaN or invalid values
+        valid_mask = ~(np.isnan(probs_flat) | np.isnan(golds_flat))
+        probs_flat = probs_flat[valid_mask]
+        golds_flat = golds_flat[valid_mask]
+        
+        if len(probs_flat) == 0:
+            print(f"No valid predictions for {mode}")
+            return {}
+        
+        # Convert probabilities to predictions
+        predictions = (probs_flat > 0.5).astype(int)
+        
+        # Compute binary metrics
+        try:
+            accuracy = accuracy_score(golds_flat, predictions)
+            precision, recall, f1, _ = precision_recall_fscore_support(golds_flat, predictions, average='binary', zero_division=0)
+            mcc = matthews_corrcoef(golds_flat, predictions)
             
-        # Confusion matrix
-        tn, fp, fn, tp = confusion_matrix(golds_flat, predictions).ravel() if len(np.unique(golds_flat)) > 1 else (0, 0, 0, len(golds_flat))
-        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-        sensitivity = recall  # Same as recall
+            # ROC AUC and PR AUC (only if both classes are present)
+            if len(np.unique(golds_flat)) > 1:
+                roc_auc = roc_auc_score(golds_flat, probs_flat)
+                pr_auc = average_precision_score(golds_flat, probs_flat)
+            else:
+                roc_auc = -1.0
+                pr_auc = -1.0
+                
+            # Confusion matrix
+            tn, fp, fn, tp = confusion_matrix(golds_flat, predictions).ravel() if len(np.unique(golds_flat)) > 1 else (0, 0, 0, len(golds_flat))
+            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+            sensitivity = recall  # Same as recall
+            
+            metrics = {
+                f'{mode}/accuracy': accuracy,
+                f'{mode}/precision': precision,
+                f'{mode}/recall': recall,
+                f'{mode}/sensitivity': sensitivity,
+                f'{mode}/specificity': specificity,
+                f'{mode}/f1': f1,
+                f'{mode}/mcc': mcc,
+                f'{mode}/roc_auc': roc_auc,
+                f'{mode}/pr_auc': pr_auc,
+            }
+            
+            # Print metrics
+            print(f"\n{mode.upper()} Binary Classification Metrics:")
+            print(f"Accuracy: {accuracy:.4f}")
+            print(f"Precision: {precision:.4f}")
+            print(f"Recall/Sensitivity: {recall:.4f}")
+            print(f"Specificity: {specificity:.4f}")
+            print(f"F1-Score: {f1:.4f}")
+            print(f"MCC: {mcc:.4f}")
+            if roc_auc != -1.0:
+                print(f"ROC AUC: {roc_auc:.4f}")
+                print(f"PR AUC: {pr_auc:.4f}")
+            print(f"True Positives: {tp}, False Positives: {fp}")
+            print(f"True Negatives: {tn}, False Negatives: {fn}")
+            
+        except Exception as e:
+            print(f"Error computing binary metrics for {mode}: {e}")
+            return {}
+    
+    else:
+        # Multi-class classification
+        # probs shape: [steps, batch_size, num_classes]
+        # golds shape: [steps, batch_size]
+        probs_flat = probs.reshape(-1, num_classes)  # [total_samples, num_classes]
+        golds_flat = golds.flatten()  # [total_samples]
         
-        metrics = {
-            f'{mode}/accuracy': accuracy,
-            f'{mode}/precision': precision,
-            f'{mode}/recall': recall,
-            f'{mode}/sensitivity': sensitivity,
-            f'{mode}/specificity': specificity,
-            f'{mode}/f1': f1,
-            f'{mode}/mcc': mcc,
-            f'{mode}/roc_auc': roc_auc,
-            f'{mode}/pr_auc': pr_auc,
-        }
+        # Filter out any NaN or invalid values
+        valid_mask = ~(np.isnan(probs_flat).any(axis=1) | np.isnan(golds_flat))
+        probs_flat = probs_flat[valid_mask]
+        golds_flat = golds_flat[valid_mask]
         
-        # Log to wandb
-        wandb.log(metrics)
+        if len(probs_flat) == 0:
+            print(f"No valid predictions for {mode}")
+            return {}
         
-        # Print metrics
-        print(f"\n{mode.upper()} Binary Classification Metrics:")
-        print(f"Accuracy: {accuracy:.4f}")
-        print(f"Precision: {precision:.4f}")
-        print(f"Recall/Sensitivity: {recall:.4f}")
-        print(f"Specificity: {specificity:.4f}")
-        print(f"F1-Score: {f1:.4f}")
-        print(f"MCC: {mcc:.4f}")
-        if roc_auc != -1.0:
-            print(f"ROC AUC: {roc_auc:.4f}")
-            print(f"PR AUC: {pr_auc:.4f}")
-        print(f"True Positives: {tp}, False Positives: {fp}")
-        print(f"True Negatives: {tn}, False Negatives: {fn}")
+        # Convert probabilities to predictions
+        predictions = np.argmax(probs_flat, axis=1)
         
-        return metrics
-        
-    except Exception as e:
-        print(f"Error computing metrics for {mode}: {e}")
-        return {}
+        # Compute multi-class metrics
+        try:
+            accuracy = accuracy_score(golds_flat, predictions)
+            precision, recall, f1, _ = precision_recall_fscore_support(golds_flat, predictions, average='macro', zero_division=0)
+            mcc = matthews_corrcoef(golds_flat, predictions)
+            
+            metrics = {
+                f'{mode}/accuracy': accuracy,
+                f'{mode}/precision': precision,
+                f'{mode}/recall': recall,
+                f'{mode}/f1': f1,
+                f'{mode}/mcc': mcc,
+            }
+            
+            # Print metrics
+            print(f"\n{mode.upper()} Multi-class Classification Metrics:")
+            print(f"Accuracy: {accuracy:.4f}")
+            print(f"Precision (macro): {precision:.4f}")
+            print(f"Recall (macro): {recall:.4f}")
+            print(f"F1-Score (macro): {f1:.4f}")
+            print(f"MCC: {mcc:.4f}")
+            
+            # Print per-class metrics
+            precision_per_class, recall_per_class, f1_per_class, _ = precision_recall_fscore_support(golds_flat, predictions, average=None, zero_division=0)
+            for i in range(num_classes):
+                print(f"Class {i} - Precision: {precision_per_class[i]:.4f}, Recall: {recall_per_class[i]:.4f}, F1: {f1_per_class[i]:.4f}")
+            
+        except Exception as e:
+            print(f"Error computing multi-class metrics for {mode}: {e}")
+            return {}
+    
+    # Log to wandb
+    wandb.log(metrics)
+    return metrics
 
 
 if __name__ == "__main__":

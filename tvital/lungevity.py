@@ -108,8 +108,13 @@ class Lungevity(nn.Module):
         fusion_layer: bool = True,
         guided_attention_heads: int = 4,
         use_mean_token: bool = False,
+        task: str = "classification",  # "classification" or "survival"
+        num_classes: int = 1,  # Number of classes for classification task
     ):
         super().__init__()
+        
+        # Store task type for flexible switching
+        self.task = task
         
         if transformer == "eva":
             self.encoder =  Eva(
@@ -152,18 +157,36 @@ class Lungevity(nn.Module):
 
         self.mha = MultiheadAttention(embed_dim=hidden_dim, num_heads=guided_attention_heads, batch_first=True, dropout=dropout_rate)
 
+        # Build both heads regardless of current task for flexibility
         if fusion_layer:
-            self.classifier = nn.Sequential(*[
+            # Survival prediction head (original)
+            self.survival_classifier = nn.Sequential(*[
                 FusionLayerWithResidual(input_dim=hidden, output_dim=hidden_dim, hidden_dim=1024, dropout_p=dropout_rate),
                 Cumulative_Probability_Layer(hidden_dim, max_followup)
             ])
+            # Binary classification head
+            self.binary_classifier = nn.Sequential(*[
+                FusionLayerWithResidual(input_dim=hidden, output_dim=hidden_dim, hidden_dim=1024, dropout_p=dropout_rate),
+                nn.Linear(hidden_dim, num_classes)  # Use configurable num_classes
+            ])
         else:
-            self.classifier = nn.Sequential(*[
+            # Survival prediction head (original)
+            self.survival_classifier = nn.Sequential(*[
                 nn.Linear(hidden, hidden_dim),
                 nn.GELU(),
                 nn.Dropout(p=dropout_rate),
                 Cumulative_Probability_Layer(hidden_dim, max_followup)
             ])
+            # Binary classification head
+            self.binary_classifier = nn.Sequential(*[
+                nn.Linear(hidden, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(p=dropout_rate),
+                nn.Linear(hidden_dim, num_classes)  # Use configurable num_classes
+            ])
+            
+        # Keep old classifier attribute for backward compatibility
+        self.classifier = self.survival_classifier
 
     def attention_pooling(
             self,
@@ -180,7 +203,10 @@ class Lungevity(nn.Module):
     def __call__(
         self,
         input: torch.Tensor,
+        task: str = None,  # Optional task override
     ):
+        # Use provided task or fall back to instance task
+        current_task = task if task is not None else self.task
         
         x, FD, FW, FH = self.patch_embed(input) #TODO where is cls
         # add cls token
@@ -193,8 +219,27 @@ class Lungevity(nn.Module):
         cls = embeddings[:, 0, :]
         
         pooled_output = self.aggregate_fn(attn_pooled, cls, mean_pooled)
-        op = self.classifier(pooled_output)
-        return op, attn_weights
+        
+        # Switch between tasks
+        if current_task == "classification":
+            output = self.binary_classifier(pooled_output)
+        elif current_task == "survival":
+            output = self.survival_classifier(pooled_output)
+        else:
+            raise ValueError(f"Unknown task: {current_task}. Must be 'classification' or 'survival'")
+        
+        return output, attn_weights
+    
+    def set_task(self, task: str):
+        """Set the task for the model"""
+        if task not in ["classification", "survival"]:
+            raise ValueError(f"Unknown task: {task}. Must be 'classification' or 'survival'")
+        self.task = task
+        # Update classifier attribute for backward compatibility
+        if task == "classification":
+            self.classifier = self.binary_classifier
+        else:
+            self.classifier = self.survival_classifier
 
     def initialize_parameters(self):        
         # Initialize (and freeze) pos_embed by sin-cos embedding
