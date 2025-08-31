@@ -27,6 +27,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
 import numpy as np
+import matplotlib.pyplot as plt
+import math
+from tools.recon_visualize import reconstruct_attention, combine_volumes, create_annotation_attention_comparison
+from einops import rearrange
 
 import resource
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -82,6 +86,8 @@ def main(cfg: DictConfig):
         use_mean_token=cfg.model.use_mean_token,
                     )
 
+    img_size = [cfg.data.img_size[2], cfg.data.img_size[0], cfg.data.img_size[1]]
+
     ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint)
     ckpt_name = os.path.join(ckpt_root_dir, cfg.testing.use_checkpoint)
     # ckpt_name = os.path.join(cfg.log.ckpt_loc, "best_checkpoint_step_81.pth")
@@ -99,12 +105,45 @@ def main(cfg: DictConfig):
                 y_seq = batch['y_seq'].to(device)
                 y_mask = batch['y_mask'].to(device)
 
-                loss, _probs = step_fn(model, image, y_seq, y_mask, device)
+                loss, _probs, attn_weights = step_fn(model, image, y_seq, y_mask, device)
 
         probs.append(_probs.detach().cpu().numpy())
         golds.append(batch['y'].cpu().numpy())
         censors.append(batch['time_at_event'].cpu().numpy())
 
+        attn = reconstruct_attention(attn_weights=attn_weights.mean(1).cpu(),
+                                     patch_size=cfg.model.patch_size,
+                                     batch_size=cfg.training.batch_size,
+                                     img_shape=img_size)
+        image = batch['image'].cpu().squeeze(0).float()
+        annotation = batch['annotation'].cpu().squeeze().float()
+
+        _, blended_annotation, blended_attention = combine_volumes(image, annotation, attn)
+
+        pid = batch['pid'][0]
+        series = batch['series'][0]
+        screen_timepoint = batch['screen_timepoint'][0]
+        time_at_event = batch['time_at_event'][0]
+
+        # Create comparison figure - no additional blending needed
+        fig= create_annotation_attention_comparison(
+            annotation=annotation,                   
+            pid=pid,
+            series=series,
+            screen_timepoint=screen_timepoint,
+            time_at_event=time_at_event,
+            probs=np.round(_probs.detach().cpu().numpy()[0], 3),
+            attention_volume=blended_attention,  # [128, 3, 160, 240] - ALREADY BLENDED
+            annotation_volume=blended_annotation, # [128, 3, 160, 240] - ALREADY BLENDED
+            max_slices=5
+        )
+
+        # Log to WandB
+        if fig:
+            wandb.log({f"pid {pid}": wandb.Image(fig)}, step=screen_timepoint)
+            plt.close(fig)
+
+        
     probs = np.concatenate(probs, axis=0)
     golds = np.concatenate(golds, axis=0)
     censors = np.concatenate(censors, axis=0)
@@ -152,9 +191,9 @@ def step_fn(
         y_mask,
         device,
 ):
-    n_year_logits, _ = model(img)
+    n_year_logits, attn_weights = model(img)
     loss = loss_fn(n_year_logits, y_seq, y_mask)
-    return loss, F.sigmoid(n_year_logits)
+    return loss, F.sigmoid(n_year_logits), attn_weights
 
 
 def loss_fn(n_year_logits, y_seq, y_mask):
