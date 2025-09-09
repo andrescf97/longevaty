@@ -137,6 +137,7 @@ class ModelConfig:
     rng: int = 24
     fusion_layer: bool = False
     mlp_hidden_dim: int = 768
+    task: str = "survival"  # "classification" or "survival"
 
 @dataclass
 class LongitudinalConfig:
