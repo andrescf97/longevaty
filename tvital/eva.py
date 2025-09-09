@@ -14,7 +14,7 @@ from timm.layers import (
     apply_keep_indices_nlc,
     RotaryEmbeddingCat,
 )
-from timm.models.eva import EvaBlock
+from tvital.timm_eva import EvaBlock
 from torch import nn
 from torch.nn import LayerNorm
 from torch.utils.checkpoint import checkpoint
