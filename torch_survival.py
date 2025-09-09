@@ -124,6 +124,8 @@ def main(cfg: DictConfig):
         fusion_layer=cfg.model.fusion_layer,
         guided_attention_heads=cfg.model.guided_attention_heads,
         use_mean_token=cfg.model.use_mean_token,
+        task="survival",
+        num_classes=cfg.data.max_followup,
                     )
     
     model = model.to(device)
@@ -389,7 +391,7 @@ def dev_step(
 def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
             patch_size, y_seq, y_mask, sw, aw):
     # Survival loss
-    n_year_logits, attn_weights = model(images)
+    n_year_logits, attn_weights, _ = model(images)
     survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
 
@@ -432,7 +434,7 @@ def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
 def loss_fn_mse(model, images, annotations, laterality, laterality_label, lobes,
             patch_size, y_seq, y_mask, sw, aw):
     # Survival loss
-    n_year_logits, attn_weights = model(images)
+    n_year_logits, attn_weights, _ = model(images)
     survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
 
@@ -444,7 +446,7 @@ def loss_fn_mse(model, images, annotations, laterality, laterality_label, lobes,
 
 def dev_loss_fn(model, images, annotations, patch_size, y_seq, y_mask, sw, aw):
     # Survival loss
-    n_year_logits, _ = model(images)
+    n_year_logits, _, _ = model(images)
     survival_loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq, reduction='none') * y_mask
     survival_loss = survival_loss.sum() / y_mask.sum()
 

@@ -105,7 +105,9 @@ def main(cfg: DictConfig):
                 y_seq = batch['y_seq'].to(device)
                 y_mask = batch['y_mask'].to(device)
 
-                loss, _probs, attn_weights = step_fn(model, image, y_seq, y_mask, device)
+                loss, _probs, attn_weights, enc_attn = step_fn(model, image, y_seq, y_mask, device)
+                cls_attn = markov_attention_rollout(enc_attn, head_indices=list(range(len(enc_attn)))) 
+                del enc_attn
 
         probs.append(_probs.detach().cpu().numpy())
         golds.append(batch['y'].cpu().numpy())
@@ -115,10 +117,16 @@ def main(cfg: DictConfig):
                                      patch_size=cfg.model.patch_size,
                                      batch_size=cfg.training.batch_size,
                                      img_shape=img_size)
+        cls_attn = reconstruct_attention(attn_weights=cls_attn.cpu(),
+                                     patch_size=cfg.model.patch_size,
+                                     batch_size=cfg.training.batch_size,
+                                     img_shape=img_size,
+                                     softmax=True)
         image = batch['image'].cpu().squeeze(0).float()
         annotation = batch['annotation'].cpu().squeeze().float()
 
         _, blended_annotation, blended_attention = combine_volumes(image, annotation, attn)
+        _, _, blended_cls_attention = combine_volumes(image, annotation, cls_attn)
 
         pid = batch['pid'][0]
         series = batch['series'][0]
@@ -135,12 +143,13 @@ def main(cfg: DictConfig):
             probs=np.round(_probs.detach().cpu().numpy()[0], 3),
             attention_volume=blended_attention,  # [128, 3, 160, 240] - ALREADY BLENDED
             annotation_volume=blended_annotation, # [128, 3, 160, 240] - ALREADY BLENDED
+            cls_attention_volume=blended_cls_attention, # [128, 3, 160, 240] - ALREADY BLENDED
             max_slices=5
         )
 
         # Log to WandB
         if fig:
-            wandb.log({f"pid {pid}": wandb.Image(fig)}, step=screen_timepoint)
+            wandb.log({f"pid {pid}": wandb.Image(fig)})
             plt.close(fig)
 
         
@@ -191,14 +200,63 @@ def step_fn(
         y_mask,
         device,
 ):
-    n_year_logits, attn_weights = model(img)
+    n_year_logits, attn_weights, cls_attn = model(img, return_attention=True)
     loss = loss_fn(n_year_logits, y_seq, y_mask)
-    return loss, F.sigmoid(n_year_logits), attn_weights
+    return loss, F.sigmoid(n_year_logits), attn_weights, cls_attn
 
 
 def loss_fn(n_year_logits, y_seq, y_mask):
     loss = F.binary_cross_entropy_with_logits(n_year_logits, y_seq.float(), weight=y_mask.float(), reduction='sum') / torch.sum(y_mask.float())
     return loss
+
+def markov_attention_rollout(attn, head_indices=[0,1,2,3,4,5,6,7,8,9,10,11], include_layers=None, add_identity=True):
+    """
+    Performs attention rollout by treating each layer's attention matrix as a transition
+    matrix in a Markov chain and multiplying them sequentially.
+    
+    Args:
+        attention_matrices (list[torch.Tensor]): List of attention matrices from each layer.
+            Each tensor should have shape (batch_size, num_heads, seq_len, seq_len).
+        include_layers (int, optional): Number of layers to include in the rollout.
+            If None, all layers in the list will be used.
+        add_identity (bool): If True, adds the identity matrix to each attention matrix (to
+            incorporate residual connections), then averages with the original matrix.
+    
+    Returns:
+        torch.Tensor: The aggregated rollout matrix of shape (batch_size, seq_len, seq_len).
+    """
+    eps = 1e-4
+
+    if include_layers is None:
+        include_layers = len(attn)
+    
+    # Get dimensions from the first attention matrix
+    batch_size, num_heads, seq_len, _ = attn[0].shape
+    
+    # Start with an identity matrix for each item in the batch.
+    rollout = torch.eye(seq_len, device=attn[0].device).unsqueeze(0).expand(batch_size, seq_len, seq_len)
+    
+    head_indices = torch.tensor(head_indices).to(attn[0].device)
+    for attn_layer in attn[-include_layers:]:
+        # Average over n heads
+        attn_layer = attn_layer[:,head_indices, :, :].mean(dim=1)
+        
+        # Add identity to current layer's attention
+        if add_identity:
+            identity = torch.eye(seq_len, device=attn_layer.device).unsqueeze(0).expand(batch_size, seq_len, seq_len)
+            attn_layer = (attn_layer + identity) / 2
+
+        # Normalize each row
+        attn_layer = attn_layer.clamp(min=eps)  # Prevent zeros
+        attn_layer = attn_layer / (attn_layer.sum(dim=-1, keepdim=True) + eps)  # Row-wise normalization
+        
+        # Multiply with current layer
+        rollout = torch.bmm(rollout, attn_layer)
+
+    rollout = rollout[:, 0][:, 1:]  # Attention from CLS token to all patches
+    return rollout
+
+
     
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)

@@ -92,7 +92,7 @@ def combine_images(gt, annotation, attn_interp):
 
     return scaled_scan_video, blended_annotation, blended
 
-def create_annotation_attention_comparison(annotation, attention_volume, annotation_volume,
+def create_annotation_attention_comparison(annotation, attention_volume, annotation_volume, cls_attention_volume,
                                          pid, series, probs,
                                          figsize_per_slice=(4, 20), max_slices=10,
                                          screen_timepoint=0, time_at_event=1):
@@ -116,6 +116,7 @@ def create_annotation_attention_comparison(annotation, attention_volume, annotat
     # Convert to numpy 
     attention_np = attention_volume.numpy() 
     annotation_np = annotation_volume.numpy()
+    cls_attention_np = cls_attention_volume.numpy()
     
     # Find slices with annotations (check if any pixel in annotation is non-zero)
     # Check difference from scan to detect annotation presence
@@ -130,9 +131,9 @@ def create_annotation_attention_comparison(annotation, attention_volume, annotat
     
     print(f"Found {len(annotation_slices)} slices with annotations: {annotation_slices}")
     
-    # Create figure with subplots: 2 columns (attention vs annotation) x N rows (slices)
+    # Create figure with subplots: 3 columns (attention vs annotation vs cls_attention) x N rows (slices)
     n_slices = len(annotation_slices)
-    fig, axes = plt.subplots(n_slices, 2, figsize=(figsize_per_slice[1], figsize_per_slice[0] * n_slices + 1),
+    fig, axes = plt.subplots(n_slices, 3, figsize=(figsize_per_slice[1], figsize_per_slice[0] * n_slices + 1),
                              constrained_layout=True)
 
     title_parts = []
@@ -150,19 +151,25 @@ def create_annotation_attention_comparison(annotation, attention_volume, annotat
         # These are already blended, so just display them directly
         attention_slice = np.transpose(attention_np[slice_idx], (1, 2, 0))  # [H, W, 3]
         annotation_slice = np.transpose(annotation_np[slice_idx], (1, 2, 0)) # [H, W, 3]
+        cls_attention_slice = np.transpose(cls_attention_np[slice_idx], (1, 2, 0)) # [H, W, 3]
         
         # Ensure values are in valid range [0, 255] for uint8 display
         attention_display = np.clip(attention_slice, 0, 255).astype(np.uint8)
         annotation_display = np.clip(annotation_slice, 0, 255).astype(np.uint8)
-        
-        # Plot attention overlay (left column) - already blended
-        axes[row_idx, 0].imshow(attention_display)
-        axes[row_idx, 0].axis('off')
-        
+        cls_attention_display = np.clip(cls_attention_slice, 0, 255).astype(np.uint8)
+
         # Plot annotation overlay (right column) - already blended
-        axes[row_idx, 1].imshow(annotation_display)
+        axes[row_idx, 0].imshow(annotation_display)
+        axes[row_idx, 0].axis('off')
+
+        # Plot attention overlay (left column) - already blended
+        axes[row_idx, 1].imshow(attention_display)
         axes[row_idx, 1].axis('off')
-    
+
+        # Plot cls_attention overlay (middle column) - already blended
+        axes[row_idx, 2].imshow(cls_attention_display)
+        axes[row_idx, 2].axis('off')
+
     plt.tight_layout()
         # Fix 1: Add suptitle BEFORE tight_layout
     plt.suptitle(" | ".join(title_parts), fontsize=16, y=0.98)
@@ -178,9 +185,11 @@ def combine_videos(scan, attention, alpha=0.3):
 
 def reconstruct_attention(attn_weights, 
                      patch_size=(16, 16, 16), batch_size=4, img_shape=[160, 240, 128],
+                     softmax=True,
                      ):
     original_image_shape = [batch_size] + img_shape
-    attn_weights = F.softmax(attn_weights.float(), dim=-1)
+    if softmax:
+        attn_weights = F.softmax(attn_weights.float(), dim=-1)
     attn_weights = attn_weights.view(batch_size, img_shape[0]//patch_size[0], img_shape[1]//patch_size[1], img_shape[2]//patch_size[2])
     zoom_factors = [out_dim / in_dim for in_dim, out_dim in zip(attn_weights.shape, original_image_shape)]
     attn_interp = torch.nn.functional.interpolate(attn_weights.unsqueeze_(0), scale_factor=zoom_factors[1:], mode="nearest-exact")

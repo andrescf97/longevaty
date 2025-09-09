@@ -407,7 +407,7 @@ def dev_step(
 def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
             patch_size, y, sw, aw, num_classes):
     # Classification loss (binary or multi-class)
-    output, attn_weights = model(images)  # Model will output based on its task setting
+    output, attn_weights, _ = model(images)  # Model will output based on its task setting
     
     # Handle output based on model task
     if model.task == "classification":
@@ -475,7 +475,7 @@ def loss_fn(model, images, annotations, laterality, laterality_label, lobes,
 
 def dev_loss_fn(model, images, annotations, patch_size, y, sw, aw, num_classes):
     # Classification loss (binary or multi-class)
-    output, _ = model(images)  # Model will output based on its task setting
+    output, _, _ = model(images)  # Model will output based on its task setting
     
     # Handle output based on model task
     if model.task == "classification":
@@ -638,5 +638,3 @@ def compute_and_log_classification_metrics(probs, golds, mode='train', num_class
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
     main()
-
-#%%

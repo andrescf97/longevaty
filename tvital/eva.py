@@ -393,19 +393,23 @@ class Eva(nn.Module):
 
         return x, rot_pos_embed, None
 
-    def forward_features(self, x, indices):
+    def forward_features(self, x, indices, return_attention=False):
         x, rot_pos_embed, keep_indices = self._pos_embed(x, indices)
+        attn_weights = []
         for blk in self.blocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
-                x = checkpoint(blk, x, rope=rot_pos_embed)
+            if not return_attention and self.grad_checkpointing and not torch.jit.is_scripting():
+                x, attn_wts = checkpoint(blk, x, rope=rot_pos_embed)
             else:
-                x = blk(x, rope=rot_pos_embed)
+                x, attn_wts = blk(x, rope=rot_pos_embed, return_attention=return_attention)
+            attn_weights.append(attn_wts)
         x = self.norm(x)
-        return x, keep_indices
+        if return_attention:
+            return x, keep_indices, attn_weights
+        return x, keep_indices, None
 
-    def forward(self, x, indices=None):
-        x, _ = self.forward_features(x, indices)
-        return x
+    def forward(self, x, indices=None, return_attention=False):
+        x, _, attn_wts  = self.forward_features(x, indices, return_attention=return_attention)
+        return x, attn_wts
 
 
 class Primus(AbstractDynamicNetworkArchitectures):
