@@ -4,7 +4,6 @@ os.environ['XLA_FLAGS'] = (
     '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 import hydra
 from omegaconf import OmegaConf
