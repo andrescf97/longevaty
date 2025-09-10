@@ -248,6 +248,7 @@ class EvaAttention(nn.Module):
             q = torch.cat([q[:, :, :npt, :], apply_rot_embed_cat(q[:, :, npt:, :], rope)], dim=2).type_as(v)
             k = torch.cat([k[:, :, :npt, :], apply_rot_embed_cat(k[:, :, npt:, :], rope)], dim=2).type_as(v)
 
+        attn_wts = None
         if self.fused_attn and not return_attention:
             x = F.scaled_dot_product_attention(
                 q, k, v,
@@ -262,7 +263,8 @@ class EvaAttention(nn.Module):
                 attn_mask = attn_mask.to(torch.bool)
                 attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
             attn = attn.softmax(dim=-1)
-            attn_wts = attn.clone()
+            if return_attention:
+                attn_wts = attn.clone()
 
             attn = self.attn_drop(attn)
             x = attn @ v
@@ -271,9 +273,7 @@ class EvaAttention(nn.Module):
         x = self.norm(x)
         x = self.proj(x)
         x = self.proj_drop(x)
-        if return_attention:
-            return x, attn_wts
-        return x
+        return x, attn_wts
 
 
 class EvaBlock(nn.Module):
@@ -370,7 +370,7 @@ class EvaBlock(nn.Module):
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x, rope: Optional[torch.Tensor] = None, attn_mask: Optional[torch.Tensor] = None, return_attention=False):
-        x_new, attn_weights = self.attn(self.norm1(x), rope=rope, attn_mask=attn_mask, return_attention=True)
+        x_new, attn_weights = self.attn(self.norm1(x), rope=rope, attn_mask=attn_mask, return_attention=return_attention)
         if self.gamma_1 is None:
             x = x + self.drop_path1(x_new)
             x = x + self.drop_path2(self.mlp(self.norm2(x)))
