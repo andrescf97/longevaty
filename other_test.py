@@ -106,9 +106,10 @@ def main(cfg: DictConfig):
                 y_seq = batch['y_seq'].to(device)
                 y_mask = batch['y_mask'].to(device)
 
-                loss, _probs, attn_weights, enc_attn = step_fn(model, image, y_seq, y_mask, device)
-                cls_attn = markov_attention_rollout(enc_attn, head_indices=list(range(len(enc_attn)))) 
-                del enc_attn
+                loss, _probs, attn_weights, enc_attn = step_fn(model, image, y_seq, y_mask, device, cfg.log.log_images)
+                if cfg.log.log_images:
+                    cls_attn = markov_attention_rollout(enc_attn, head_indices=list(range(len(enc_attn)))) 
+                    del enc_attn
 
         probs.append(_probs.detach().cpu().numpy())
         golds.append(batch['y'].cpu().numpy())
@@ -205,8 +206,9 @@ def step_fn(
         y_seq,
         y_mask,
         device,
+        get_attn=False
 ):
-    n_year_logits, attn_weights, cls_attn = model(img, return_attention=True)
+    n_year_logits, attn_weights, cls_attn = model(img, return_attention=get_attn)
     loss = loss_fn(n_year_logits, y_seq, y_mask)
     return loss, F.sigmoid(n_year_logits), attn_weights, cls_attn
 
