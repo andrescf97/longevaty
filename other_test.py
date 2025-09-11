@@ -4,6 +4,7 @@ os.environ['XLA_FLAGS'] = (
     '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 import hydra
@@ -113,44 +114,49 @@ def main(cfg: DictConfig):
         golds.append(batch['y'].cpu().numpy())
         censors.append(batch['time_at_event'].cpu().numpy())
 
-        attn = reconstruct_attention(attn_weights=attn_weights.mean(1).cpu(),
-                                     patch_size=cfg.model.patch_size,
-                                     batch_size=cfg.training.batch_size,
-                                     img_shape=img_size)
-        cls_attn = reconstruct_attention(attn_weights=cls_attn.cpu(),
-                                     patch_size=cfg.model.patch_size,
-                                     batch_size=cfg.training.batch_size,
-                                     img_shape=img_size,
-                                     softmax=True)
-        image = batch['image'].cpu().squeeze(0).float()
-        annotation = batch['annotation'].cpu().squeeze().float()
+        if cfg.log.log_images:
+            cls_attn = reconstruct_attention(attn_weights=cls_attn.cpu(),
+                                        patch_size=cfg.model.patch_size,
+                                        batch_size=cfg.training.batch_size,
+                                        img_shape=img_size,
+                                        softmax=True)
+            if attn_weights is not None:
+                attn = reconstruct_attention(attn_weights=attn_weights.mean(1).cpu(),
+                                            patch_size=cfg.model.patch_size,
+                                            batch_size=cfg.training.batch_size,
+                                            img_shape=img_size)
+            else:
+                attn = cls_attn.clone()
 
-        _, blended_annotation, blended_attention = combine_volumes(image, annotation, attn)
-        _, _, blended_cls_attention = combine_volumes(image, annotation, cls_attn)
+            image = batch['image'].cpu().squeeze(0).float()
+            annotation = batch['annotation'].cpu().squeeze().float()
 
-        pid = batch['pid'][0]
-        series = batch['series'][0]
-        screen_timepoint = batch['screen_timepoint'][0]
-        time_at_event = batch['time_at_event'][0]
+            _, blended_annotation, blended_attention = combine_volumes(image, annotation, attn)
+            _, _, blended_cls_attention = combine_volumes(image, annotation, cls_attn)
 
-        # Create comparison figure - no additional blending needed
-        fig= create_annotation_attention_comparison(
-            annotation=annotation,                   
-            pid=pid,
-            series=series,
-            screen_timepoint=screen_timepoint,
-            time_at_event=time_at_event,
-            probs=np.round(_probs.detach().cpu().numpy()[0], 3),
-            attention_volume=blended_attention,  # [128, 3, 160, 240] - ALREADY BLENDED
-            annotation_volume=blended_annotation, # [128, 3, 160, 240] - ALREADY BLENDED
-            cls_attention_volume=blended_cls_attention, # [128, 3, 160, 240] - ALREADY BLENDED
-            max_slices=5
-        )
+            pid = batch['pid'][0]
+            series = batch['series'][0]
+            screen_timepoint = batch['screen_timepoint'][0]
+            time_at_event = batch['time_at_event'][0]
 
-        # Log to WandB
-        if fig:
-            wandb.log({f"pid {pid}": wandb.Image(fig)})
-            plt.close(fig)
+            # Create comparison figure - no additional blending needed
+            fig= create_annotation_attention_comparison(
+                annotation=annotation,                   
+                pid=pid,
+                series=series,
+                screen_timepoint=screen_timepoint,
+                time_at_event=time_at_event,
+                probs=np.round(_probs.detach().cpu().numpy()[0], 3),
+                attention_volume=blended_attention,  # [128, 3, 160, 240] - ALREADY BLENDED
+                annotation_volume=blended_annotation, # [128, 3, 160, 240] - ALREADY BLENDED
+                cls_attention_volume=blended_cls_attention, # [128, 3, 160, 240] - ALREADY BLENDED
+                max_slices=5
+            )
+
+            # Log to WandB
+            if fig:
+                wandb.log({f"pid {pid}": wandb.Image(fig)})
+                plt.close(fig)
 
         
     probs = np.concatenate(probs, axis=0)
