@@ -179,7 +179,9 @@ class Permuted(transforms.MapTransform):
         image = data["image"]
         # Permute the image dimensions for 3d conv patch embedding
         permuted_image = image.permute(0, 3, 1, 2)
+        permuted_mask = data["mask"].permute(0, 3, 1, 2)
         data['image'] = permuted_image
+        data['mask'] = permuted_mask
 
         if 'annotation' not in self.keys:
             return data
