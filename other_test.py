@@ -4,7 +4,7 @@ os.environ['XLA_FLAGS'] = (
     '--xla_gpu_triton_gemm_any=True '
     '--xla_gpu_enable_latency_hiding_scheduler=true '
 )
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 
 
 import hydra
@@ -195,7 +195,7 @@ def main(cfg: DictConfig):
             "y_mask": monai_dict_test[i]['y_mask'],
         })
 
-    with open(f"{cfg.log.ckpt_loc}/predictions_{cfg.log.use_checkpoint}.json", 'w') as fp:
+    with open(f"{cfg.log.ckpt_loc}/predictions_{name}.json", 'w') as fp:
         json.dump(res, fp, indent=4)
 
     return
