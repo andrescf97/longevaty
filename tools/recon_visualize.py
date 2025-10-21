@@ -186,13 +186,14 @@ def combine_videos(scan, attention, alpha=0.3):
 def reconstruct_attention(attn_weights, 
                      patch_size=(16, 16, 16), batch_size=4, img_shape=[160, 240, 128],
                      softmax=True,
+                     mode="nearest-exact"
                      ):
     original_image_shape = [batch_size] + img_shape
     if softmax:
         attn_weights = F.softmax(attn_weights.float(), dim=-1)
     attn_weights = attn_weights.view(batch_size, img_shape[0]//patch_size[0], img_shape[1]//patch_size[1], img_shape[2]//patch_size[2])
     zoom_factors = [out_dim / in_dim for in_dim, out_dim in zip(attn_weights.shape, original_image_shape)]
-    attn_interp = torch.nn.functional.interpolate(attn_weights.unsqueeze_(0), scale_factor=zoom_factors[1:], mode="nearest-exact")
+    attn_interp = torch.nn.functional.interpolate(attn_weights.unsqueeze_(0), scale_factor=zoom_factors[1:], mode=mode)
     return attn_interp.squeeze()
 
 def combine_volumes(gt, annotation, attn_interp):
