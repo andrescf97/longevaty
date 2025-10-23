@@ -4,13 +4,12 @@
 
 wandb:
     dry_run: False
-    project_name: "survival-torch"
-    task: "mae"
+    project_name: "longitudinal"
+    task: "lung_survival"
     entity: "mri-ai-lab"
 
 data:
-    dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
-    dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
+    dataset_file_100: "/vol/miltank/projects/NLST/sybil_metadata/nlst_metadata.json"
     slice_thickness_threshold: 2.5
     max_followup: 6
     num_classes: 1
@@ -18,10 +17,10 @@ data:
     use_thinnest_cut: True
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
-    data_root: "/pool/data/lung/NLST/npy"
-    monai_dict_train: "/tank-1/users/braj/projects/iderha/mae-jax/updated_json_files/train_our_updated.json"
-    monai_dict_dev: "/tank-1/users/braj/projects/iderha/mae-jax/updated_json_files/dev_our_updated.json"
-    monai_dict_test: "/tank-1/users/braj/projects/iderha/mae-jax/updated_json_files/test_our_updated.json"
+    data_root: "/vol/miltank/projects/NLST/nlst_npy"
+    monai_dict_train: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/train.json"
+    monai_dict_dev: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/dev.json"
+    monai_dict_test: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/test.json"
     max_train_len: 24000
     img_size: [160, 240, 128]
 
@@ -97,19 +96,6 @@ model:
     use_mean_token: False
     guided_attention_heads: 4
     fusion_layer: False
-
-
-# model:
-#     patch_size: 16
-#     enc_dim: 768
-#     dec_dim: 384
-#     dropout_rate: 0.1
-#     enc_heads: 12
-#     enc_depth: 12
-#     dec_heads: 6
-#     dec_depth: 4
-#     in_chans: 1
-#     rng: 24
 
 transform:
     train_tf:
