@@ -5,7 +5,6 @@ wandb:
     entity: "ge29jil-technical-university-of-munich"
 
 data:
-    # These may not be used by the CLS extraction script, but you can keep or clean them later
     dataset_file: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
     dataset_file_100: "/dss/dssmcmlfs01/pn73mu/pn73mu-dss-0000/datasets/big_nodule_nlst/dataset_jsons/nlst_25_metadata.json"
     slice_thickness_threshold: 2.5
@@ -16,12 +15,10 @@ data:
     corrupted_paths: "./files/corrupted_img_paths.pkl"
     google_splits_filename: "./files/Shetty_et_al(Google)_data_splits.p"
 
-    # old cluster paths (not used now by your script):
     data_root: "/pool/data/lung/NLST/npy"
     monai_dict_train: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/train.json"
     monai_dict_dev:   "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/dev.json"
 
-    # **this is the one your script actually uses**
     monai_dict_test:  "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/test.json"
 
     max_train_len: 24000
@@ -71,13 +68,9 @@ loss:
     aw: 1
 
 log:
-    # Where checkpoints live (base dir)
     ckpt_loc: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/models/checkpoints/fine_tuned"
 
-    # Subdirectory for this particular run
     use_checkpoint: "amber-bird-318"
-
-    # The rest is unused for CLS extraction but kept for compatibility
     ckpt_load_loc: "/pool/data/lung/NLST/checkpoints/mae"
     mae_ckpt_load: "vit-last"
     mae_use_checkpoint: "crisp-donkey-382.ckpt"
@@ -91,7 +84,6 @@ log:
 
 model:
     transformer: "eva"
-    # 16³ model according to amber-bird-318 weights
     patch_size: [16, 16, 16]
     enc_dim: 792
     dec_dim: 396
@@ -102,7 +94,7 @@ model:
     dec_depth: 4
     in_chans: 1
     rng: 24
-    num_reg_tokens: 0  # We do not use EVA's register tokens, only our CLS token
+    num_reg_tokens: 0
     use_cls: True
     use_mean_token: False
     guided_attention_heads: 4

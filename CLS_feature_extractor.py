@@ -123,7 +123,7 @@ def main(cfg: DictConfig):
         y = batch["y"]
         time_at_event = batch["time_at_event"]
 
-        # Optional but useful covariate + seq labels
+        # Optional fields
         cancer_lat = batch.get("cancer_laterality", None)
         y_seq = batch.get("y_seq", None)
         y_mask = batch.get("y_mask", None)
@@ -138,7 +138,7 @@ def main(cfg: DictConfig):
                 "time_at_event": float(time_at_event[i]),
             }
 
-            # Robust handling of cancer_laterality
+            #handling of cancer_laterality
             if cancer_lat is not None:
                 try:
                     # If it's a batch-aligned list/sequence
