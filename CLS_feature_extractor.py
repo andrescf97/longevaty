@@ -21,8 +21,9 @@ import torch
 from torch.utils.data import DataLoader
 import torch.multiprocessing as mp
 import resource
+from hydra.utils import get_original_cwd
 
-# Increase file handle limits (needed by MONAI + DataLoader on clusters)
+# --- Increase open file limit (for large datasets) ---
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (2 * 25000, rlimit[1]))
 
@@ -34,7 +35,7 @@ device = "cuda"
 
 @hydra.main(config_path="./configs", config_name="cls-extraction-16", version_base=None)
 def main(cfg: DictConfig):
-    # --- WandB init (optional, but kept for consistency) ---
+    # --- WandB init ---
     if cfg.wandb.dry_run:
         os.environ["WANDB_MODE"] = "dryrun"
 
@@ -67,7 +68,7 @@ def main(cfg: DictConfig):
         drop_last=False,
     )
 
-    # --- Model construction (must match checkpoint hyperparameters) ---
+    # --- Model construction ---
     model = Lungevity(
         transformer=cfg.model.transformer,
         patch_size=cfg.model.patch_size,
@@ -89,7 +90,7 @@ def main(cfg: DictConfig):
         use_mean_token=cfg.model.use_mean_token,
     )
 
-    # --- Load fine-tuned checkpoint (amber-bird-318/best.pt) ---
+    # --- Load fine-tuned checkpoint ---
     ckpt_root_dir = os.path.join(cfg.log.ckpt_loc, cfg.log.use_checkpoint)
     ckpt_name = os.path.join(ckpt_root_dir, cfg.testing.use_checkpoint)
     ckpt = torch.load(ckpt_name, weights_only=False, map_location="cpu")
@@ -98,15 +99,31 @@ def main(cfg: DictConfig):
     model = model.to(device)
     model.eval()
 
-    # --- Wrap model with CLSFeatureExtractor (encoder + CLS token only) ---
+    # --- Wrap model with CLSFeatureExtractor ---
     feature_extractor = CLSFeatureExtractor(model).to(device)
     feature_extractor.eval()
 
-    # --- Single .pt file to store all CLS features + metadata ---
-    features_path = os.path.join(cfg.log.ckpt_loc, f"cls_features_{name}.pt")
+    # --- Prepare output directory ---
+    project_root = get_original_cwd()
+    features_dir = os.path.join(project_root, "cls_features")
+    os.makedirs(features_dir, exist_ok=True)
+
+    features_path = os.path.join(features_dir, f"cls_features_{name}.pt")
+    print(f"Will save CLS features to: {features_path}")
+
+    # --- Smoke test file permission to save embeddings  ---
+    try:
+        torch.save({"test": 1}, features_path + ".tmp")
+        os.remove(features_path + ".tmp")
+        print("Save path is writable, proceeding with full extraction.")
+    except Exception as e:
+        print(f"ERROR: cannot write to {features_path}: {e}")
+        print("Aborting before running the long CLS extraction loop.")
+        return
+
     all_samples = []
 
-    # --- Loop over test set and extract CLS embeddings ---
+    # --- extract CLS embeddings ---
     for step, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
         with torch.no_grad():
             with torch.autocast(
@@ -138,14 +155,12 @@ def main(cfg: DictConfig):
                 "time_at_event": float(time_at_event[i]),
             }
 
-            #handling of cancer_laterality
+            # Robust handling of cancer_laterality
             if cancer_lat is not None:
                 try:
-                    # If it's a batch-aligned list/sequence
                     if hasattr(cancer_lat, "__len__") and len(cancer_lat) == B:
                         sample["cancer_laterality"] = cancer_lat[i]
                     else:
-                        # Fallback: store whatever it is
                         sample["cancer_laterality"] = cancer_lat
                 except Exception:
                     sample["cancer_laterality"] = cancer_lat
