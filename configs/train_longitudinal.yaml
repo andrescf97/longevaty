@@ -1,0 +1,35 @@
+wandb:
+  dry_run: False
+  project_name: "longitudinal_delta_training"
+  task: "delta_hybrid_v2_scheduler"
+  entity: "ge29jil-technical-university-of-munich"
+
+data:
+  metadata_csv: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/delta/features_extracted/metadata.csv"
+  features_dir: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/delta/features_extracted"
+  json_train: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/train.json"
+  json_dev: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/dev.json"
+  max_seq_len: 3
+
+model:
+  input_dim: 1584
+  hidden_dim: 512
+  num_time_bins: 6
+  dropout: 0.3
+
+loss:
+  lambda_mean: 0.2
+  lambda_var: 0.05
+
+training:
+  batch_size: 64
+  epochs: 200
+  lr: 1e-4
+  weight_decay: 1e-2
+  
+  patience: 25
+  metric: "val_auc"
+  mode: "max"
+
+log:
+  output_dir: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/delta/checkpoints"
