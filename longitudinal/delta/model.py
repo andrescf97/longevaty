@@ -3,12 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LongitudinalDeltaModel(nn.Module):
-    def __init__(self, input_dim=1584, hidden_dim=512, num_time_bins=6, dropout=0.3):
+    def __init__(self, input_dim=1584, hidden_dim=256, num_time_bins=6, dropout=0.1, num_heads=4):
         """
-        Longitudinal Delta Network with Hybrid Output (Risk + Time).
+        OA-BreaCR Architecture with Multi-Level (ML) Joint Learning.
+        
+        Outputs 3 sets of logits:
+        1. Main: Uses [Current + Attention(Deltas)] to predict time.
+        2. Current (Aux): Uses ONLY Current Image to predict time.
+        3. Prior (Aux): Uses ONLY Prior Image to predict time.
         """
         super().__init__()
         
+        # 1. Feature Projector
         self.projector = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -16,40 +22,56 @@ class LongitudinalDeltaModel(nn.Module):
             nn.Dropout(dropout)
         )
         
-        fusion_input_dim = hidden_dim * 3
-        self.fusion_mlp = nn.Sequential(
-            nn.Linear(fusion_input_dim, hidden_dim),
+        # 2. Attention Mechanism (The "Delta" Logic)
+        self.attn_layer = nn.MultiheadAttention(
+            embed_dim=hidden_dim, 
+            num_heads=num_heads, 
+            dropout=dropout, 
+            batch_first=True
+        )
+        
+        # 3. Main Head Classifier (Fusion)
+        self.classifier_main = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim), 
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout)
         )
-        
-        # --- THE HYBRID HEADS ---
-        
-        # Head A: Risk (Binary)
-        # "Is this patient High Risk or Low Risk overall?"
-        self.risk_head = nn.Linear(hidden_dim, 1)
-        
-        # Head B: Time (Ordinal / Mean-Variance)
-        # "At what timepoint will the event happen?"
-        self.time_head = nn.Linear(hidden_dim, num_time_bins)
+        self.head_main = nn.Linear(hidden_dim, num_time_bins + 1)
 
     def forward(self, x):
-        # Standard Projection & Delta Calculation
-        h = self.projector(x)
-        t_minus_2, t_minus_1, t_0 = h[:, 0], h[:, 1], h[:, 2]
+        """
+        Args:
+            x: [Batch, 3, Input_Dim] (Sequence: t0, t1, t2)
+        Returns:
+            logits
+        """
+        # Embed all timepoints
+        h = self.projector(x) # [Batch, 3, Hidden]
         
-        v_recent = t_0 - t_minus_1
-        v_hist = t_minus_1 - t_minus_2
+        t_0 = h[:, 0].unsqueeze(1)       
+        t_1 = h[:, 1].unsqueeze(1) 
+        t_2 = h[:, 2].unsqueeze(1)
         
-        combined = torch.cat([t_0, v_recent, v_hist], dim=1)
-        fused = self.fusion_mlp(combined)
+        # --- PATH A: MAIN (History Fusion) ---
+        # Calculate Deltas
+        v_recent = t_2 - t_1 
+        v_hist = t_1 - t_0
+        delta_context = torch.cat([v_recent, v_hist], dim=1) 
         
-        # --- DUAL OUTPUTS ---
-        risk_logits = self.risk_head(fused)
-        time_logits = self.time_head(fused)
+        # Attention: "Which history changes matter for the current scan?"
+        attn_out, _ = self.attn_layer(query=t_2, key=delta_context, value=delta_context)
         
-        return risk_logits, time_logits
+        # Fuse Current + Attention
+        t_2_flat = t_2.squeeze(1)
+        attn_flat = attn_out.squeeze(1)
+        fused = torch.cat([t_2_flat, attn_flat], dim=1)
+        
+        # Main Prediction
+        feat_main = self.classifier_main(fused)
+        logits = self.head_main(feat_main)
+        
+        return logits
 
 class EarlyStopping:
     def __init__(self, patience=10, mode='max', delta=0.0001):
