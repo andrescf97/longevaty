@@ -116,7 +116,7 @@ def collate_fn(batch):
     return out
 
 
-@hydra.main(config_path="./configs", config_name='ayman_config.yaml', version_base=None)
+@hydra.main(config_path="./configs", config_name='ordinal_config.yaml', version_base=None)
 def main(cfg: DictConfig):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     

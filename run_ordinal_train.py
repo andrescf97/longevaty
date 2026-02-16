@@ -136,7 +136,7 @@ def get_ordinal_targets(y_seq, padding_mask):
     return torch.tensor(targets, device=device, dtype=torch.long)
 
 
-@hydra.main(config_path="./configs", config_name='ayman_config.yaml', version_base=None)
+@hydra.main(config_path="./configs", config_name='ordinal_config.yaml', version_base=None)
 def main(cfg: DictConfig):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     wandb.init(project="ordinal_patch8_vitals", config=OmegaConf.to_container(cfg))
