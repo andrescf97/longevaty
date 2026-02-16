@@ -1,0 +1,46 @@
+wandb:
+    dry_run: False
+    project_name: "ordinal_tiny_experiment"
+    task: "lung_survival"
+    entity: "ge29jil-technical-university-of-munich"
+
+data:
+    train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/patch_8/train_patch_8.pt"
+    dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/patch_8/dev_patch_8.pt"
+    test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/patch_8/test_patch_8.pt"
+
+    train_json: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/train.json"
+    dev_json: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/dev.json"
+    test_json: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/derived_datasets/test.json"
+    
+    # REQUIRED for Ordinal Head
+    num_classes: 4 
+
+model:
+    #enc_dim: 792
+    enc_dim: 2376
+    
+    # Tiny Configuration
+    mlp_hidden_dim: 192       
+    longitudinal_heads: 8     
+    longitudinal_layers: 3    
+    dropout_rate: 0.1         
+
+training:
+    seed: 42
+    batch_size: 32        
+    epochs: 100
+    use_amp: True
+    dtype: float16            
+    num_workers: 4 
+    dev_num_workers: 2 
+
+optimizer:
+    peak_lr: 0.0001       
+    weight_decay: 0.0001
+
+log:
+    ckpt_loc: "./checkpoints_ordinal_patch8"
+
+test:
+    ckpt_path: "./checkpoints_ordinal_patch8/best_model.pt"
