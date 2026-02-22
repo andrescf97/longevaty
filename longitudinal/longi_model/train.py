@@ -207,7 +207,7 @@ def main(cfg: Config):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.training.epochs, eta_min=1e-6)
 
     # ---- Early Stopping----
-    best_auc = -float("inf")
+    best_metric = -float("inf")
     best_epoch = -1
     best_metrics = {}
 
@@ -216,7 +216,6 @@ def main(cfg: Config):
     bad_epochs = 0
     
     # ---- training loop ----
-    best_auc = -float("inf")
     for epoch in range(cfg.training.epochs):
         model.train()
 
@@ -233,13 +232,8 @@ def main(cfg: Config):
             optimizer.zero_grad(set_to_none=True)
 
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-                #loss, logits, targets, masks = model.step_fn_scr(batch, device, use_scr=False)
-                loss, logits, targets, masks = model.step_fn_scr(
-                    batch, 
-                    device, 
-                    use_scr=getattr(cfg.training, "use_scr", False),
-                    scr_weight=getattr(cfg.training, "scr_weight", 0.0) #Reads from config
-                )
+                loss, logits, targets, masks = model.step_fn(batch, device)
+                
 
             # backward + update
             if use_scaler:
@@ -307,9 +301,8 @@ def main(cfg: Config):
         with torch.no_grad():
             for batch in dev_loader:
                 with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-                    loss, logits, targets, masks = model.step_fn_scr(
-                        batch, device, use_scr=False
-                    )
+                    loss, logits, targets, masks = model.step_fn(batch, device)
+
                 dev_loss += loss.item()
                 dev_logits.append(logits.detach().cpu())
                 dev_labels.append(targets.detach().cpu())
@@ -335,7 +328,6 @@ def main(cfg: Config):
         d_logits_all = torch.cat(dev_logits, dim=0)
 
         golds = torch.cat(dev_meta_y).cpu().numpy().astype(np.float32).reshape(-1)
-        golds = golds.astype(np.float32)
 
 
         censor_times = torch.cat(dev_meta_t).cpu().numpy()
@@ -348,7 +340,7 @@ def main(cfg: Config):
             censor_times, d_probs, golds, train_censoring_dist,
             max_followup=K, mode="dev"
         )
-
+        
         current_metric = survival_metrics.get("dev/c_index", 0.0)
 
         log_dict = {
@@ -359,14 +351,15 @@ def main(cfg: Config):
         log_dict.update(risk_metrics)
         wandb.log(log_dict)
 
+        current_metric = survival_metrics.get("dev/c_index", 0.0)
 
         print(f"Epoch {epoch}: Dev C-Index: {current_metric:.4f}")
 
         # -------------------------------------------------------------
         # 5. MODEL SELECTION & SAVING
         # -------------------------------------------------------------
-        if current_metric > best_auc: 
-            best_auc = current_metric
+        if current_metric > best_metric: 
+            best_metric = current_metric
             best_epoch = epoch
             best_metrics = {}
             best_metrics.update(survival_metrics)
@@ -374,7 +367,7 @@ def main(cfg: Config):
 
             bad_epochs = 0
             save_checkpoint(ckpt_root_dir, "", "best_auc", model, epoch, optimizer, scheduler, scaler)
-            print(f"New Best C-Index: {best_auc:.4f}")
+            print(f"New Best C-Index: {best_metric:.4f}")
         else:
             bad_epochs += 1
             if bad_epochs >= patience:
@@ -385,7 +378,7 @@ def main(cfg: Config):
     print("\n" + "="*30)
     print(f"TRAINING FINISHED.")
     print(f"Best Epoch: {best_epoch}")
-    print(f"Best Validation Score (C-Index): {best_auc:.4f}")
+    print(f"Best Validation Score (C-Index): {best_metric:.4f}")
     
     if "c_index" in best_metrics:
         print(f"Best C-Index: {best_metrics['c_index']:.4f}")
