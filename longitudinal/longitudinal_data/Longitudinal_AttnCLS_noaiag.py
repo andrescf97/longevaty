@@ -134,16 +134,24 @@ class LongitudinalAttnCLSDataset(Dataset):
             print(f"DEBUG: Final usable features count: {len(feat_by_exam)}")
 
         # =========================================================
-
+        
         # 3) Join meta + feat
         joined_by_pid = defaultdict(list)
-        for ex, m in meta_by_exam.items():
-            feat = feat_by_exam.get(ex, None)
+        for m in meta_list:
+            feat = None
+            # Testa alla möjliga nycklar som extraheraren kan ha använt
+            for potential_key in ["series", "exam", "pid"]:
+                if potential_key in m:
+                    k_str = str(m[potential_key])
+                    if k_str in feat_by_exam:
+                        feat = feat_by_exam[k_str]
+                        break # Vi hittade en matchning!
+            
             if feat is None: 
                 continue
 
             joined_by_pid[str(m["pid"])].append({
-                "exam": ex,
+                "exam": m.get("exam", None),
                 "screen_timepoint": int(m["screen_timepoint"]),
                 "time_at_event": float(m["time_at_event"]),
                 "y": float(m["y"]),
@@ -152,7 +160,6 @@ class LongitudinalAttnCLSDataset(Dataset):
                 "cancer_laterality": m.get("cancer_laterality", None),
                 "cls": feat,
             })
-
         # 4) Build patient samples
         self.patient_samples = []
         for pid, exams in joined_by_pid.items():
@@ -201,7 +208,8 @@ class LongitudinalAttnCLSDataset(Dataset):
             else:
                 L = torch.randint(1, T + 1, (1,)).item()
             
-            idxs = torch.arange(L)
+            #idxs = torch.arange(L)
+            idxs = torch.arange(T - L, T) 
             last = idxs[-1].item()
             
             if base["y_mask"][last].sum() > 0:

@@ -6,33 +6,10 @@ wandb:
 
 data:
   feature_key: attn_cls
-
-  #registered
-  #train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/registered_features/attn_cls/train_reg_attn_cls.pt"
-  #dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/registered_features/attn_cls/dev_reg_attn_cls.pt"
-  #test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/registered_features/attn_cls/test_reg_attn_cls.pt"
-  
-  #unregistered with aiag patch 16
- #train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/attn_features/train_attn_cls.pt"
-  #dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/attn_features/dev_attn_cls.pt"
-  #test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/attn_features/test_attn_cls.pt"
-  
-  #unregistered no aiag patch 16
-  train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_16/train_no_aiag_16.pt"
-  dev_path:   "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_16/dev_no_aiag_16.pt"
-  test_path:  "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_16/test_no_aiag_16.pt"
-
-
   #unregistered no aiag patch 8
-  #train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/train_no_aiag_8.pt"
-  #dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/dev_no_aiag_8.pt"
-  #test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/test_no_aiag_8.pt" 
-
-  #cls attn max
-  #train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/max_pool/train_max_pool.pt"
-  #dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/max_pool/dev_max_pool.pt"
-  #test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/max_pool/test_max_pool.pt"
-
+  train_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/train.pt"
+  dev_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/dev.pt"
+  test_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/extracted_features/no_aiag_8/test.pt" 
 
   #json for reg and unreg
   train_json: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/data/registered_datasets/train.json"
@@ -45,7 +22,7 @@ data:
 
 
 test:
-  ckpt_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/jasmine/checkpoints/snowy-brook-172/best_auc"
+  ckpt_path: "/vol/miltank/projects/practical_wise2526/lung_cancer_lft/adlm_lft/longitudinal/longi_model/checkpoints/easy-butterfly-541/best_auc"
 
 training:
   batch_size: 128
@@ -61,21 +38,21 @@ training:
   minority_patients_per_batch: 6
   shuffle: False 
 
-  use_scr: False
-  scr_weight: 0.0
+  #use_scr: False
+  #scr_weight: 0.0
 
 model:
   input_dim: 2376 #1584 #cls 792
-  hidden_dim: 64 #512 | 256 | 128 | 64 
+  hidden_dim: 256 #512 | 256 | 128 | 64 
   n_heads: 4
   n_layers: 2
-  pooling: "last"   # "last" | "mean" | "max" | "attn" | "mean_max"
+  pooling: "attn"   # "last" | "mean" | "max" | "attn" | "mean_max"
   max_followup: 6
-  dropout: 0.3
-  use_difference: False 
-
+  dropout: 0.5
+  use_difference: True 
+ 
 optimizer:
-  peak_lr: 1e-4
+  peak_lr: 5e-5 #1e-4
   weight_decay: 0.05
   lr_scheduler: "cosine"
 
